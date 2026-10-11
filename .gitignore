@@ -1,0 +1,42 @@
+# ---- Terraform ----
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.tfstate.lock.info
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+*tfplan*
+
+# ---- Data: never commit datasets, even synthetic ones ----
+# Anchored with a leading slash so it only matches the repo-root folder,
+# not scripts/data/ (lesson from PitchVision).
+/data/
+*.ndjson
+
+# ---- Python ----
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# ---- Secrets and local config ----
+.env
+.env.*
+
+# ---- Misc ----
+tmp/
+.DS_Store
+
+/tmp/
