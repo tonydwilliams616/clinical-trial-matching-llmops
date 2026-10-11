@@ -1,0 +1,22 @@
+# Checks that run on every `git commit` (install once per clone: `pre-commit install`).
+# A failing check stops the commit before anything reaches CI.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-added-large-files   # default limit 500 KB; stops datasets sneaking in
+      - id: detect-private-key
+      - id: trailing-whitespace       # the cause of PitchVision's failed fmt check
+      - id: end-of-file-fixer
+
+  - repo: local
+    hooks:
+      # Same check CI runs; formats the files, so just `git add` them again and recommit
+      - id: terraform-fmt
+        name: terraform fmt
+        entry: terraform fmt -recursive terraform/
+        language: system
+        files: \.tf$
+        pass_filenames: false
