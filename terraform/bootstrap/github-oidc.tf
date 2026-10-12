@@ -64,6 +64,7 @@ resource "aws_iam_role_policy_attachment" "github_plan_readonly" {
 
 # Plan needs to read state and create/remove the S3 lock file.
 data "aws_iam_policy_document" "github_plan_state" {
+  #checkov:skip=CKV_AWS_107:Tokens only allow pulling public ECR images (Helm charts); authenticated pulls avoid 429 rate limits on shared GitHub runner IPs
 
   statement {
     sid       = "PullPublicEcrCharts"
