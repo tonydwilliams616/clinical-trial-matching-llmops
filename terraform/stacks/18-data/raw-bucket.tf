@@ -95,8 +95,11 @@ data "aws_iam_policy_document" "raw_bucket" {
     }
   }
 
-  # Uploads may only ask for KMS encryption (default encryption covers uploads
-  # that don't ask at all). "IfExists" so requests without the header still work.
+  # Uploads that ASK for encryption must ask for KMS. Uploads that don't ask
+  # get the bucket default (this key). Both conditions must match (AND):
+  # the header is present (Null = false) AND it isn't aws:kms.
+  # Note: "...IfExists" would be wrong here - it evaluates to TRUE when the
+  # header is missing, which denied every plain upload (found by testing).
   statement {
     sid       = "DenyNonKmsUploads"
     effect    = "Deny"
@@ -109,14 +112,20 @@ data "aws_iam_policy_document" "raw_bucket" {
     }
 
     condition {
-      test     = "StringNotEqualsIfExists"
+      test     = "Null"
+      variable = "s3:x-amz-server-side-encryption"
+      values   = ["false"]
+    }
+
+    condition {
+      test     = "StringNotEquals"
       variable = "s3:x-amz-server-side-encryption"
       values   = ["aws:kms"]
     }
   }
 
-  # ...and only with THIS key, so raw data can't end up under a key with
-  # looser access.
+  # ...and if an upload names a KMS key, it must be THIS key, so raw data
+  # can't end up under a key with looser access.
   statement {
     sid       = "DenyOtherKmsKeys"
     effect    = "Deny"
@@ -129,7 +138,13 @@ data "aws_iam_policy_document" "raw_bucket" {
     }
 
     condition {
-      test     = "StringNotEqualsIfExists"
+      test     = "Null"
+      variable = "s3:x-amz-server-side-encryption-aws-kms-key-id"
+      values   = ["false"]
+    }
+
+    condition {
+      test     = "StringNotEquals"
       variable = "s3:x-amz-server-side-encryption-aws-kms-key-id"
       values   = [aws_kms_key.raw.arn]
     }
