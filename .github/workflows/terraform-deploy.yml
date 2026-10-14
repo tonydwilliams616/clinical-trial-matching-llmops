@@ -25,6 +25,7 @@ on:
         options:
           - all
           - 00-account
+          - 05-registry
           - 18-data
 
 permissions:
