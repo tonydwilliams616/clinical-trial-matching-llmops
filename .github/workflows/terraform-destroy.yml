@@ -1,0 +1,198 @@
+name: Terraform Destroy
+
+# Tears down the EPHEMERAL stacks only - the ones billed by the hour - in this
+# order: 30-platform -> 20-eks -> 16-endpoints -> 15-nat.
+# Permanent stacks (bootstrap, 00-account, 05-registry, 10-network, 18-data)
+# hold data or cost (almost) nothing when idle, so they are never touched here.
+# Stacks with no code yet are skipped, so this is safe to run at any time.
+# Spin back up with: Actions -> Terraform Deploy -> Run workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "destroy" to confirm'
+        required: true
+  schedule:
+    # Nightly safety net in case a session ends without tearing down.
+    # 22:17 UTC (23:17 UK summer time). Off the hour because GitHub delays
+    # scheduled runs at :00 when busy (PitchVision saw ~3h delays).
+    - cron: "17 22 * * *"
+
+permissions:
+  contents: read
+
+env:
+  # Keep in line with terraform-ci.yml and terraform-deploy.yml
+  TF_VERSION: "1.13.4"
+  TF_IN_AUTOMATION: "true"
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  # Must match the names the 20-eks / 30-platform stacks will use (phase 2)
+  CLUSTER_NAME: ctm-eks
+  KARPENTER_NODE_ROLE: ctm-eks-karpenter-node
+  # Destroyed in exactly this order. Stacks without code yet are skipped.
+  EPHEMERAL_STACKS: "30-platform 20-eks 16-endpoints 15-nat"
+
+jobs:
+  destroy:
+    name: destroy
+    if: github.event_name == 'schedule' || github.event.inputs.confirm == 'destroy'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    # No required reviewers on this environment, so the nightly run isn't blocked
+    environment: teardown
+    permissions:
+      contents: read
+      id-token: write
+    # Same lock as the deploy workflow's apply job
+    concurrency:
+      group: terraform-state
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_APPLY_ROLE_ARN }}
+          role-session-name: gha-destroy-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 3600
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      # -----------------------------------------------------------------------
+      # Karpenter creates EC2 instances and instance profiles that Terraform
+      # doesn't know about. Remove them first, or the node IAM role and the
+      # VPC can't be deleted. (No-ops until the cluster exists.)
+      # -----------------------------------------------------------------------
+      - name: Drain Karpenter nodes via Kubernetes
+        run: |
+          if ! aws eks describe-cluster --name "$CLUSTER_NAME" >/dev/null 2>&1; then
+            echo "Cluster not found - nothing to drain"
+            exit 0
+          fi
+          aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION"
+
+          # Stop Argo CD reconciling first - otherwise it immediately re-creates
+          # the NodePools we're about to delete (self-heal working against us)
+          if kubectl get statefulset argocd-application-controller -n argocd >/dev/null 2>&1; then
+            kubectl scale statefulset argocd-application-controller -n argocd --replicas=0
+            kubectl rollout status statefulset argocd-application-controller -n argocd --timeout=2m || true
+          fi
+
+          if ! kubectl get crd nodepools.karpenter.sh >/dev/null 2>&1; then
+            echo "Karpenter not installed - nothing to drain"
+            exit 0
+          fi
+
+          # Deleting NodePools makes Karpenter drain and terminate its nodes
+          kubectl delete nodepools.karpenter.sh --all --wait=false
+          if [ -n "$(kubectl get nodeclaims.karpenter.sh -o name)" ]; then
+            kubectl wait --for=delete nodeclaims.karpenter.sh --all --timeout=10m \
+              || echo "::warning::NodeClaims did not drain in time - falling back to EC2 cleanup"
+          fi
+
+          # Deleting EC2NodeClasses lets Karpenter remove the instance profiles it created
+          kubectl delete ec2nodeclasses.karpenter.k8s.aws --all --timeout=5m \
+            || echo "::warning::EC2NodeClass deletion timed out - falling back to IAM cleanup"
+
+      - name: Terminate any orphaned Karpenter instances
+        run: |
+          ids=$(aws ec2 describe-instances \
+            --filters "Name=tag-key,Values=karpenter.sh/nodepool" \
+                      "Name=tag:kubernetes.io/cluster/${CLUSTER_NAME},Values=owned" \
+                      "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+            --query 'Reservations[].Instances[].InstanceId' --output text)
+          if [ -n "$ids" ]; then
+            echo "::warning::Terminating orphaned instances: $ids"
+            aws ec2 terminate-instances --instance-ids $ids >/dev/null
+            aws ec2 wait instance-terminated --instance-ids $ids
+          else
+            echo "No orphaned Karpenter instances"
+          fi
+
+      - name: Remove orphaned Karpenter instance profiles
+        run: |
+          if ! aws iam get-role --role-name "$KARPENTER_NODE_ROLE" >/dev/null 2>&1; then
+            echo "Karpenter node role not found - nothing to clean"
+            exit 0
+          fi
+          for ip in $(aws iam list-instance-profiles-for-role --role-name "$KARPENTER_NODE_ROLE" \
+                        --query 'InstanceProfiles[].InstanceProfileName' --output text); do
+            echo "::warning::Removing orphaned instance profile $ip"
+            aws iam remove-role-from-instance-profile --instance-profile-name "$ip" --role-name "$KARPENTER_NODE_ROLE"
+            aws iam delete-instance-profile --instance-profile-name "$ip"
+          done
+
+      - name: Destroy stacks in reverse order
+        run: |
+          # The VPC CNI can leave detached ("available") network interfaces behind
+          # when nodes terminate. They keep the node security group and VPC alive,
+          # so security group deletion fails with DependencyViolation.
+          cleanup_enis() {
+            local vpc="$1" wait="$2"
+            [ -z "$vpc" ] && return 0
+            if [ "$wait" = "wait" ]; then
+              # Give terminating nodes up to ~2 minutes to release their interfaces
+              for i in $(seq 1 12); do
+                in_use=$(aws ec2 describe-network-interfaces \
+                  --filters "Name=vpc-id,Values=$vpc" "Name=description,Values=aws-K8S-*" "Name=status,Values=in-use" \
+                  --query 'length(NetworkInterfaces)' --output text)
+                [ "$in_use" = "0" ] && break
+                sleep 10
+              done
+            fi
+            for eni in $(aws ec2 describe-network-interfaces \
+                --filters "Name=vpc-id,Values=$vpc" "Name=description,Values=aws-K8S-*" "Name=status,Values=available" \
+                --query 'NetworkInterfaces[].NetworkInterfaceId' --output text); do
+              echo "::warning::Deleting leaked CNI network interface $eni"
+              aws ec2 delete-network-interface --network-interface-id "$eni" || true
+            done
+          }
+
+          # VPC ID from the (permanent) network stack's state, once it exists
+          vpc_id=""
+          if ls terraform/stacks/10-network/*.tf >/dev/null 2>&1; then
+            vpc_id=$(cd terraform/stacks/10-network && terraform init -input=false >/dev/null 2>&1 && terraform output -raw vpc_id 2>/dev/null || true)
+          fi
+          echo "VPC: ${vpc_id:-none}"
+
+          stacks=""
+          for s in $EPHEMERAL_STACKS; do
+            if ls "terraform/stacks/$s"/*.tf >/dev/null 2>&1; then
+              stacks+="terraform/stacks/$s "
+            fi
+          done
+          echo "Will destroy (in order): ${stacks:-nothing}"
+
+          echo "## Terraform destroy" >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$stacks" ]; then
+            echo "No ephemeral stacks have code yet - nothing to destroy." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          for stack in $stacks; do
+            echo "::group::Destroy $stack"
+            (
+              cd "$stack"
+              terraform init -input=false
+
+              if [ "$(basename "$stack")" = "20-eks" ]; then
+                # Remove the nodes first, then clean up their leaked interfaces
+                # BEFORE Terraform tries to delete the node security group.
+                terraform destroy -auto-approve -input=false -no-color -lock-timeout=5m \
+                  -target=module.eks.module.eks_managed_node_group
+                cleanup_enis "$vpc_id" wait
+              fi
+
+              # Safe when already destroyed - empty state means "No changes"
+              terraform destroy -auto-approve -input=false -no-color -lock-timeout=5m
+            )
+            # Catch anything left behind before the next (lower) stack is destroyed
+            cleanup_enis "$vpc_id"
+            echo "::endgroup::"
+            echo "- 🗑️ \`$stack\`" >> "$GITHUB_STEP_SUMMARY"
+          done
