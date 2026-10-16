@@ -2,7 +2,7 @@
 
 **A production-style LLMOps platform on Amazon EKS that shortlists synthetic patients for clinical trials – routing every piece of clinical text through an in-cluster PII-masking gateway before it reaches Amazon Bedrock.**
 
-> Portfolio project, work in progress. The focus is the platform: infrastructure as code, GitOps delivery, keyless workload identity, network-enforced data protection, autoscaling and observability. Built on the patterns from [PitchVision](https://github.com/tonydwilliams616/pitchvision-mlops).
+> Portfolio project, work in progress. The focus is the platform: infrastructure as code, GitOps delivery, keyless workload identity, network-enforced data protection, autoscaling and observability.
 
 ## Ground rules
 

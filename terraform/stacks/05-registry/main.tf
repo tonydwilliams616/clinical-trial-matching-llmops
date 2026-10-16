@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 # Container registry - permanent stack. Images survive nightly teardowns.
-# Same pattern as PitchVision: immutable tags (each tag = one commit SHA, so
+# Immutable tags (each tag = one commit SHA, so
 # lineage can't lie), scan on push, and a lifecycle policy to cap storage.
 # -----------------------------------------------------------------------------
 resource "aws_ecr_repository" "this" {
