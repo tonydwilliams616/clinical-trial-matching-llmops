@@ -22,14 +22,22 @@ variable "vpc_cidr" {
   default     = "10.20.0.0/16"
 }
 
-variable "az_count" {
-  description = "Number of availability zones to spread subnets across."
-  type        = number
-  default     = 3
+variable "az_ids" {
+  # Zone IDs are the same physical zones in every account (names like
+  # us-east-1a are shuffled per account), and a fixed list never grows when
+  # AWS adds a zone. use1-az3 is avoided: it does not support EKS control planes.
+  description = "Availability zones by zone ID, pinned."
+  type        = list(string)
+  default     = ["use1-az1", "use1-az2", "use1-az4"]
 
   validation {
-    condition     = var.az_count >= 2 && var.az_count <= 3
-    error_message = "EKS needs at least 2 AZs; this layout supports up to 3."
+    condition     = length(var.az_ids) >= 2 && length(var.az_ids) <= 3 && alltrue([for id in var.az_ids : can(regex("^use1-az[0-9]+$", id))])
+    error_message = "Use 2 or 3 us-east-1 zone IDs (e.g. use1-az1); EKS needs at least 2 and this layout supports up to 3."
+  }
+
+  validation {
+    condition     = !contains(var.az_ids, "use1-az3")
+    error_message = "use1-az3 does not support EKS control planes."
   }
 }
 

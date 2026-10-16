@@ -8,9 +8,9 @@ output "vpc_cidr_block" {
   value       = module.vpc.vpc_cidr_block
 }
 
-output "azs" {
-  description = "Availability zones in use."
-  value       = local.azs
+output "az_ids" {
+  description = "Availability zone IDs in use."
+  value       = var.az_ids
 }
 
 output "private_subnet_ids" {

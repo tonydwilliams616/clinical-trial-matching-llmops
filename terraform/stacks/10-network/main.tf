@@ -7,37 +7,24 @@
 #   16-endpoints  interface endpoints (Bedrock, ECR, STS, SQS, Logs)
 # -----------------------------------------------------------------------------
 
-# Pick AZs by zone ID, not name - names map to different physical zones per
-# account. use1-az3 does not support EKS control planes, so it's excluded.
-data "aws_availability_zones" "available" {
-  state            = "available"
-  exclude_zone_ids = ["use1-az3"]
-
-  filter {
-    name   = "opt-in-status"
-    values = ["opt-in-not-required"]
-  }
-}
-
 locals {
-  azs = slice(data.aws_availability_zones.available.names, 0, var.az_count)
-
   # /19 private subnets (8,190 IPs each) - EKS gives every pod a VPC IP.
   # 10.20.0.0/19, 10.20.32.0/19, 10.20.64.0/19
-  private_subnets = [for i, az in local.azs : cidrsubnet(var.vpc_cidr, 3, i)]
+  private_subnets = [for i, az in var.az_ids : cidrsubnet(var.vpc_cidr, 3, i)]
 
   # /24 public subnets - load balancers and the NAT gateway only, no workloads.
   # 10.20.96.0/24, 10.20.97.0/24, 10.20.98.0/24
-  public_subnets = [for i, az in local.azs : cidrsubnet(var.vpc_cidr, 8, 96 + i)]
+  public_subnets = [for i, az in var.az_ids : cidrsubnet(var.vpc_cidr, 8, 96 + i)]
 }
 
 module "vpc" {
-  source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 6.0"
+  # Pinned to the commit of release v6.7.3, not a version range: a git tag or
+  # registry version can be re-pointed, a commit hash cannot (supply chain).
+  source = "git::https://github.com/terraform-aws-modules/terraform-aws-vpc.git?ref=b3abd6df2ecf052451a361ed55b8f06f8742a795"
 
   name = "${var.project_name}-vpc"
   cidr = var.vpc_cidr
-  azs  = local.azs
+  azs  = var.az_ids # zone IDs - the module places subnets by ID
 
   private_subnets = local.private_subnets
   public_subnets  = local.public_subnets
