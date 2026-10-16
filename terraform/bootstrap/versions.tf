@@ -15,7 +15,7 @@ terraform {
 provider "aws" {
   region = var.aws_region
 
-  # Refuse to run against any other account (e.g. PitchVision's), whatever
+  # Refuse to run against any other account, whatever
   # credentials happen to be active in the shell.
   allowed_account_ids = [var.aws_account_id]
 
