@@ -26,6 +26,7 @@ on:
           - all
           - 00-account
           - 05-registry
+          - 10-network
           - 18-data
 
 permissions:
