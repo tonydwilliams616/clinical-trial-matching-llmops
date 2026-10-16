@@ -42,19 +42,32 @@ SPACY_MODEL = "en_core_web_lg"
 SCORE_THRESHOLD = 0.35
 
 
-def drop_nested(results: list) -> list:
-    """Drop findings that sit inside a bigger (or equal, higher-scored) one.
+# Entities found by the language model (a judgement from sentence context).
+# Everything else comes from a pattern that matched an exact shape.
+MODEL_ENTITIES = {"PERSON", "LOCATION", "DATE_TIME"}
 
-    "(617) 555-0147" can be found as a PHONE and, inside it, "555-0147" as
-    something else. The anonymizer already masks the outer span only; this
-    keeps the findings and counts honest too, so the benchmark doesn't see
-    phantom extra identifiers.
+
+def _rank(r) -> tuple:
+    # On the exact same text, a purpose-built pattern beats the model's guess:
+    # "record no. 482-1937" is an MRN, even if the model thinks it's a date.
+    return (r.entity_type not in MODEL_ENTITIES, r.score, r.entity_type)
+
+
+def drop_nested(results: list) -> list:
+    """Keep one finding per piece of text.
+
+    - A finding inside a bigger one is dropped: "(617) 555-0147" is one PHONE,
+      not a PHONE plus a 7-digit number inside it.
+    - Two findings on exactly the same text: the higher-ranked one is kept.
+
+    The anonymizer already masks only one of them; this keeps the findings and
+    counts honest too, so the benchmark doesn't see phantom extra identifiers.
     """
     def inside(r, o) -> bool:
         if r is o or not (o.start <= r.start and r.end <= o.end):
             return False
         same_span = (r.start, r.end) == (o.start, o.end)
-        return not same_span or (o.score, o.entity_type) > (r.score, r.entity_type)
+        return not same_span or _rank(o) > _rank(r)
 
     return [r for r in results if not any(inside(r, o) for o in results)]
 

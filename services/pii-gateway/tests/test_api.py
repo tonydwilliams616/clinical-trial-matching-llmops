@@ -52,7 +52,7 @@ def test_no_phantom_findings_inside_a_phone(client):
     # Regression: the phone's last 7 digits were also reported as an MRN
     text = "Seen John Smith, MRN 4821937, phone (617) 555-0147."
     body = client.post("/v1/mask", json={"text": text}).json()
-    assert body["counts"] == {"PERSON": 1, "MRN": 1, "PHONE": 1}
+    assert body["counts"] == {"PERSON": 1, "MRN": 1, "PHONE": 1}, body["findings"]
     spans = [(f["start"], f["end"]) for f in body["findings"]]
     for i, (s1, e1) in enumerate(spans):
         for j, (s2, e2) in enumerate(spans):
@@ -61,7 +61,8 @@ def test_no_phantom_findings_inside_a_phone(client):
 
 def test_hyphenated_mrn_needs_record_context(client):
     body = client.post("/v1/mask", json={"text": "See record no. 482-1937 for details."}).json()
-    assert body["counts"].get("MRN") == 1
+    assert body["counts"].get("MRN") == 1, body["findings"]
+    assert "<MRN>" in body["masked_text"], body["masked_text"]
 
 
 def test_clinical_text_left_alone(client):
