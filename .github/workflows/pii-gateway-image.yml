@@ -1,17 +1,19 @@
 name: PII Gateway Image
 
-# Pull requests: run the tests inside the image build, then build the runtime
-# image (no AWS access needed).
-# main: same, then push the runtime image to ECR tagged with the commit SHA.
+# Every run: unit tests (inside the image build) -> build the runtime image ->
+# benchmark it against the notes/v1 answer key -> fail below MIN_RECALL.
+# main only, and only if all of that passed: push to ECR tagged with the SHA.
 on:
   pull_request:
     paths:
       - "services/pii-gateway/**"
+      - "scripts/eval/**"
       - ".github/workflows/pii-gateway-image.yml"
   push:
     branches: [main]
     paths:
       - "services/pii-gateway/**"
+      - "scripts/eval/**"
       - ".github/workflows/pii-gateway-image.yml"
   workflow_dispatch:
 
@@ -28,10 +30,14 @@ env:
   CONTEXT: services/pii-gateway
   # Only pushes to main may publish (matches the push role's IAM trust policy)
   PUSH: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+  # Release gate: share of planted identifiers that must be FULLY masked.
+  # Raise it as the gateway improves; never lower it without a written reason.
+  MIN_RECALL: "0.89"
+  BENCHMARK_S3: s3://ctm-raw-359013545044/notes/v1
 
 jobs:
   build:
-    name: test and build${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && ' and push' || '' }}
+    name: test, benchmark and build${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && ' and push' || '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -43,7 +49,7 @@ jobs:
       - uses: docker/setup-buildx-action@v3
 
       # The test stage runs pytest during the build - a failing test fails the job
-      - name: Run tests (test stage)
+      - name: Run unit tests (test stage)
         uses: docker/build-push-action@v6
         with:
           context: ${{ env.CONTEXT }}
@@ -52,7 +58,57 @@ jobs:
           cache-from: type=gha,scope=pii-gateway
           cache-to: type=gha,mode=max,scope=pii-gateway
 
-      - name: Configure AWS credentials (main only)
+      # Build the exact runtime image that would be pushed, and load it locally
+      - name: Build runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ env.CONTEXT }}
+          target: runtime
+          load: true
+          tags: pii-gateway:ci
+          build-args: GIT_SHA=${{ github.sha }}
+          cache-from: type=gha,scope=pii-gateway
+          provenance: false
+
+      - name: Start gateway
+        run: docker run -d --name pii-gateway -p 8080:8080 pii-gateway:ci
+
+      - name: Configure AWS credentials (benchmark read-only role)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_EVAL_ROLE_ARN }}
+          role-session-name: gha-eval-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download benchmark (notes/v1)
+        run: |
+          mkdir -p "$RUNNER_TEMP/notes-v1"
+          for f in notes.jsonl labels.jsonl manifest.json; do
+            aws s3 cp --only-show-errors "$BENCHMARK_S3/$f" "$RUNNER_TEMP/notes-v1/$f"
+          done
+
+      - name: Benchmark (release gate)
+        run: >
+          python3 scripts/eval/score_gateway.py
+          --data-dir "$RUNNER_TEMP/notes-v1"
+          --url http://localhost:8080
+          --min-recall "$MIN_RECALL"
+          --report benchmark-report.json
+
+      # Counts only - no note text or identifier values
+      - name: Upload benchmark report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-report
+          path: benchmark-report.json
+          if-no-files-found: ignore
+
+      - name: Gateway logs (on failure)
+        if: failure()
+        run: docker logs pii-gateway 2>&1 | tail -50
+
+      - name: Configure AWS credentials (push role, main only)
         if: env.PUSH == 'true'
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -65,17 +121,14 @@ jobs:
         if: env.PUSH == 'true'
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build runtime image${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && ' and push' || '' }}
-        uses: docker/build-push-action@v6
-        with:
-          context: ${{ env.CONTEXT }}
-          target: runtime
-          push: ${{ env.PUSH == 'true' }}
-          tags: ${{ steps.ecr.outputs.registry || 'local' }}/${{ env.REPOSITORY }}:${{ github.sha }}
-          build-args: GIT_SHA=${{ github.sha }}
-          cache-from: type=gha,scope=pii-gateway
-          # Single plain image manifest (no attestation index) - simplest for ECR
-          provenance: false
+      # Push the very image that was benchmarked - not a rebuild
+      - name: Push runtime image (main only)
+        if: env.PUSH == 'true'
+        env:
+          IMAGE: ${{ steps.ecr.outputs.registry }}/${{ env.REPOSITORY }}:${{ github.sha }}
+        run: |
+          docker tag pii-gateway:ci "$IMAGE"
+          docker push "$IMAGE"
 
       - name: Summary
         if: env.PUSH == 'true'
