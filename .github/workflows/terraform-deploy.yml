@@ -28,6 +28,7 @@ on:
           - 05-registry
           - 10-network
           - 15-nat
+          - 16-endpoints
           - 18-data
 
 permissions:
