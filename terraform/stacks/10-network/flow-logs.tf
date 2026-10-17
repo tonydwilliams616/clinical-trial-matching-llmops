@@ -139,10 +139,16 @@ data "aws_iam_policy_document" "flow_logs_bucket" {
     }
   }
 
+  # Two key layouts: the classic AWSLogs/<account>/... and, because the flow
+  # log uses Hive-compatible partitions, AWSLogs/aws-account-id=<account>/...
+  # Allowing only the first caused "Access error" on delivery.
   statement {
-    sid       = "AWSLogDeliveryWrite"
-    actions   = ["s3:PutObject"]
-    resources = ["${aws_s3_bucket.flow_logs.arn}/AWSLogs/${local.account_id}/*"]
+    sid     = "AWSLogDeliveryWrite"
+    actions = ["s3:PutObject"]
+    resources = [
+      "${aws_s3_bucket.flow_logs.arn}/AWSLogs/${local.account_id}/*",
+      "${aws_s3_bucket.flow_logs.arn}/AWSLogs/aws-account-id=${local.account_id}/*",
+    ]
 
     principals {
       type        = "Service"
@@ -219,6 +225,13 @@ resource "aws_flow_log" "vpc" {
   }
 
   depends_on = [aws_s3_bucket_policy.flow_logs]
+
+  # AWS checks delivery permissions when a flow log is created, and the status
+  # only updates on the next delivery. Re-creating the flow log whenever the
+  # bucket policy changes gives an immediate, fresh permission check.
+  lifecycle {
+    replace_triggered_by = [aws_s3_bucket_policy.flow_logs]
+  }
 }
 
 output "flow_logs_bucket_name" {
