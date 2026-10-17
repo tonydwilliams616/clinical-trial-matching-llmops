@@ -27,6 +27,7 @@ on:
           - 00-account
           - 05-registry
           - 10-network
+          - 15-nat
           - 18-data
 
 permissions:
