@@ -46,11 +46,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # The test stage runs pytest during the build - a failing test fails the job
       - name: Run unit tests (test stage)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ${{ env.CONTEXT }}
           target: test
@@ -60,7 +60,7 @@ jobs:
 
       # Build the exact runtime image that would be pushed, and load it locally
       - name: Build runtime image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ${{ env.CONTEXT }}
           target: runtime
@@ -74,7 +74,7 @@ jobs:
         run: docker run -d --name pii-gateway -p 8080:8080 pii-gateway:ci
 
       - name: Configure AWS credentials (benchmark read-only role)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_EVAL_ROLE_ARN }}
           role-session-name: gha-eval-${{ github.run_id }}
@@ -98,7 +98,7 @@ jobs:
       # Counts only - no note text or identifier values
       - name: Upload benchmark report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: benchmark-report
           path: benchmark-report.json
@@ -110,7 +110,7 @@ jobs:
 
       - name: Configure AWS credentials (push role, main only)
         if: env.PUSH == 'true'
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_ECR_PUSH_ROLE_ARN }}
           role-session-name: gha-ecr-push-${{ github.run_id }}
