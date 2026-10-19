@@ -30,9 +30,9 @@ spec:
         - port: 8080
           protocol: TCP
 ---
-# 3. Outbound: DNS, and HTTPS to addresses inside the VPC only - that is where
-#    the Bedrock interface endpoint lives. No route to the internet, even
-#    though the NAT gateway exists.
+# 3. Outbound: DNS, HTTPS to addresses inside the VPC only (where the Bedrock
+#    interface endpoint lives), and the node's Pod Identity agent for AWS
+#    credentials. No route to the internet, even though the NAT gateway exists.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -61,4 +61,12 @@ spec:
             cidr: 10.20.0.0/16
       ports:
         - port: 443
+          protocol: TCP
+    # Pod Identity agent on the pod's own node (link-local address): the AWS
+    # SDK fetches the role's short-lived credentials here, not from STS
+    - to:
+        - ipBlock:
+            cidr: 169.254.170.23/32
+      ports:
+        - port: 80
           protocol: TCP
