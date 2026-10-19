@@ -1,0 +1,25 @@
+# Horizontal Pod Autoscaler: adds copies when average CPU passes 70% of the
+# request, removes them when load drops. Never fewer than 2 (resilience).
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: pii-gateway
+  namespace: pii-gateway
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: pii-gateway
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    # Scale down slowly so a brief lull doesn't remove capacity that's needed again
+    scaleDown:
+      stabilizationWindowSeconds: 120

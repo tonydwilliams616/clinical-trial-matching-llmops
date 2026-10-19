@@ -1,0 +1,26 @@
+# Local testing on kind: the image is built on your machine and loaded into the
+# cluster (no registry, no AWS). Everything else is identical to EKS.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+images:
+  - name: pii-gateway
+    newName: pii-gateway
+    newTag: local
+patches:
+  - target:
+      kind: Deployment
+      name: pii-gateway
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Never
+  # A laptop has less memory than the cluster: cap at 4 copies (1 GiB each)
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: pii-gateway
+    patch: |-
+      - op: replace
+        path: /spec/maxReplicas
+        value: 4

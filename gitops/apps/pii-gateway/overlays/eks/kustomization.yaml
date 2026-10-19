@@ -1,0 +1,19 @@
+# EKS: the image that passed the benchmark gate, from ECR, pinned by commit SHA
+# (tags are immutable). Pods run on Karpenter-managed workload nodes.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+images:
+  - name: pii-gateway
+    newName: 359013545044.dkr.ecr.us-east-1.amazonaws.com/ctm/pii-gateway
+    newTag: d93ddd43644d1ecfb2b5492e8e3b954e340b14d8
+patches:
+  - target:
+      kind: Deployment
+      name: pii-gateway
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value:
+          node-role: workload
