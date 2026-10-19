@@ -1,0 +1,19 @@
+# Karpenter's EC2NodeClass and NodePool, synced from Git on every spin-up.
+# Self-heal reverts any manual change made in the cluster.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: karpenter-nodepools
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/tonydwilliams616/clinical-trial-matching-llmops.git
+    targetRevision: main
+    path: gitops/platform/karpenter
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
