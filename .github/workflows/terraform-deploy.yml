@@ -30,6 +30,7 @@ on:
           - 15-nat
           - 16-endpoints
           - 20-eks
+          - 30-platform
           - 18-data
 
 permissions:
