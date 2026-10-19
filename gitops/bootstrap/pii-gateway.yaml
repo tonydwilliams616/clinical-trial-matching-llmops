@@ -1,0 +1,32 @@
+# The PII gateway (EKS overlay), synced from Git on every spin-up. The image
+# tag in the overlay is the benchmark-gated build in ECR, so changing what runs
+# in the cluster always means a reviewed PR.
+#
+# The overlay creates its own namespace (with Pod Security "restricted"), so no
+# CreateNamespace option here. Its pods wait for a Karpenter workload node; the
+# retry covers the minute or so before the NodePool exists on a fresh cluster.
+# The Pod Identity association for its service account is created by 20-eks.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pii-gateway
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/tonydwilliams616/clinical-trial-matching-llmops.git
+    targetRevision: main
+    path: gitops/apps/pii-gateway/overlays/eks
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: pii-gateway
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 10
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
