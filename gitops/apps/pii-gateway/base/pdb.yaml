@@ -1,0 +1,12 @@
+# PodDisruptionBudget: voluntary disruptions (node drains, Karpenter
+# consolidation, upgrades) may remove at most one copy at a time.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: pii-gateway
+  namespace: pii-gateway
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pii-gateway

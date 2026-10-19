@@ -1,0 +1,64 @@
+# Firewall rules between pods. Everything not allowed below is denied.
+---
+# 1. Deny all traffic in and out of the namespace by default
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: pii-gateway
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+# 2. Only the agent workers may call the gateway
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-agent-worker
+  namespace: pii-gateway
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pii-gateway
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agent-worker
+      ports:
+        - port: 8080
+          protocol: TCP
+---
+# 3. Outbound: DNS, and HTTPS to addresses inside the VPC only - that is where
+#    the Bedrock interface endpoint lives. No route to the internet, even
+#    though the NAT gateway exists.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-dns-and-vpc-https
+  namespace: pii-gateway
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pii-gateway
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: 10.20.0.0/16
+      ports:
+        - port: 443
+          protocol: TCP

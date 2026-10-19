@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: pii-gateway
+  namespace: pii-gateway
+spec:
+  selector:
+    app.kubernetes.io/name: pii-gateway
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

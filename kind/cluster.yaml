@@ -1,0 +1,16 @@
+# Local test cluster: 1 control plane + 3 workers, each labelled with a fake
+# zone so topology spread behaves as it would across 3 AWS zones.
+#   kind create cluster --name ctm --config kind/cluster.yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+  - role: worker
+    labels:
+      topology.kubernetes.io/zone: zone-a
+  - role: worker
+    labels:
+      topology.kubernetes.io/zone: zone-b
+  - role: worker
+    labels:
+      topology.kubernetes.io/zone: zone-c

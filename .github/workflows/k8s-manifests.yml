@@ -1,0 +1,57 @@
+name: Kubernetes Manifests
+
+# Renders every kustomize overlay and validates the result against the
+# Kubernetes API schemas, plus the Argo CD / Karpenter / ESO resources against
+# their CRD schemas. Catches typos and wrong fields before anything is synced
+# to a cluster - no cluster needed.
+on:
+  pull_request:
+    paths:
+      - "gitops/**"
+      - ".github/workflows/k8s-manifests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "gitops/**"
+      - ".github/workflows/k8s-manifests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  KUBECONFORM_VERSION: v0.7.0
+  KUBECONFORM_SHA256: c31518ddd122663b3f3aa874cfe8178cb0988de944f29c74a0b9260920d115d3
+  # Community catalogue of CRD schemas (Argo CD, Karpenter, External Secrets)
+  CRD_SCHEMAS: https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json
+
+jobs:
+  validate:
+    name: validate manifests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install kubeconform (checksum verified)
+        run: |
+          curl -sSfL -o kubeconform.tgz \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  kubeconform.tgz" | sha256sum -c -
+          tar xzf kubeconform.tgz kubeconform
+          sudo mv kubeconform /usr/local/bin/
+
+      # kubectl (preinstalled on the runner) includes kustomize
+      - name: Render and validate app overlays
+        run: |
+          set -euo pipefail
+          for overlay in gitops/apps/*/overlays/*/; do
+            echo "::group::${overlay}"
+            kubectl kustomize "${overlay}" \
+              | kubeconform -strict -summary -schema-location default -schema-location "${CRD_SCHEMAS}"
+            echo "::endgroup::"
+          done
+
+      - name: Validate platform and bootstrap manifests
+        run: |
+          kubeconform -strict -summary -schema-location default -schema-location "${CRD_SCHEMAS}" \
+            gitops/bootstrap gitops/platform
