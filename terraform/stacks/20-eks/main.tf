@@ -89,6 +89,11 @@ module "eks" {
     vpc-cni = {
       most_recent    = true
       before_compute = true # networking must exist before nodes join
+      # Turn on the VPC CNI's network policy agent: without it, EKS accepts
+      # NetworkPolicy objects but silently enforces nothing
+      configuration_values = jsonencode({
+        enableNetworkPolicy = "true"
+      })
     }
     eks-pod-identity-agent = {
       most_recent    = true
