@@ -1,0 +1,29 @@
+# The agent worker (EKS overlay), synced from Git on every spin-up. Its
+# ScaledObject needs KEDA's CRDs, so it retries until the keda app has
+# installed them. The Pod Identity association is created by 20-eks.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: agent-worker
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/tonydwilliams616/clinical-trial-matching-llmops.git
+    targetRevision: main
+    path: gitops/apps/agent-worker/overlays/eks
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: agent-worker
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m

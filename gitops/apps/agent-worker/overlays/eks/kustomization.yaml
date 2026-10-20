@@ -1,0 +1,42 @@
+# EKS: the tested image from ECR, pinned by commit SHA, on Karpenter workload
+# nodes. Bucket names and the queue URL are not secrets: the worker's IAM role
+# is what limits access.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+images:
+  - name: agent-worker
+    newName: 359013545044.dkr.ecr.us-east-1.amazonaws.com/ctm/agent-worker
+    newTag: c55b4aa1e7e6af47024a9faaad5806a6e5060bde
+patches:
+  - target:
+      kind: Deployment
+      name: agent-worker
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value:
+          node-role: workload
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: QUEUE_URL
+          value: https://sqs.us-east-1.amazonaws.com/359013545044/ctm-match-jobs
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: RAW_BUCKET
+          value: ctm-raw-359013545044
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: DATA_BUCKET
+          value: ctm-deidentified-359013545044
+  - target:
+      kind: ScaledObject
+      name: agent-worker
+    patch: |-
+      - op: replace
+        path: /spec/triggers/0/metadata/queueURL
+        value: https://sqs.us-east-1.amazonaws.com/359013545044/ctm-match-jobs
