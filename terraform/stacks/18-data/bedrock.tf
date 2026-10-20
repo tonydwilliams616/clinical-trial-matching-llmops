@@ -19,7 +19,7 @@ variable "bedrock_source_profile_id" {
 
 resource "aws_bedrock_inference_profile" "matching" {
   name        = "${var.project_name}-matching"
-  description = "Clinical trial matching - free-text criteria reasoning on masked notes"
+  description = "Clinical trial matching on masked clinical notes"
 
   model_source {
     copy_from = "arn:aws:bedrock:${var.aws_region}:${var.aws_account_id}:inference-profile/${var.bedrock_source_profile_id}"
