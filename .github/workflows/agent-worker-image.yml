@@ -1,0 +1,100 @@
+name: Agent Worker Image
+
+# Every run: unit tests (inside the image build) -> build the runtime image ->
+# smoke-check it starts Python with its dependencies, as the non-root user.
+# main only, and only if all of that passed: push to ECR tagged with the SHA.
+on:
+  pull_request:
+    paths:
+      - "services/agent-worker/**"
+      - ".github/workflows/agent-worker-image.yml"
+  push:
+    branches: [main]
+    paths:
+      - "services/agent-worker/**"
+      - ".github/workflows/agent-worker-image.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-worker-image-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  REPOSITORY: ctm/agent-worker
+  CONTEXT: services/agent-worker
+  # Only pushes to main may publish (matches the push role's IAM trust policy)
+  PUSH: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+
+jobs:
+  build:
+    name: test and build${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && ' and push' || '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      # The test stage runs pytest during the build - a failing test fails the job
+      - name: Run unit tests (test stage)
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ env.CONTEXT }}
+          target: test
+          push: false
+          cache-from: type=gha,scope=agent-worker
+          cache-to: type=gha,mode=max,scope=agent-worker
+
+      # Build the exact runtime image that would be pushed, and load it locally
+      - name: Build runtime image
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ env.CONTEXT }}
+          target: runtime
+          load: true
+          tags: agent-worker:ci
+          build-args: GIT_SHA=${{ github.sha }}
+          cache-from: type=gha,scope=agent-worker
+          provenance: false
+
+      # The worker needs AWS to run for real, so check the image itself: the
+      # app and boto3 import, and it runs as UID 10001 (not root)
+      - name: Smoke check runtime image
+        run: |
+          docker run --rm agent-worker:ci python -c "import boto3, app.worker; print('imports ok')"
+          test "$(docker run --rm agent-worker:ci id -u)" = "10001"
+
+      - name: Configure AWS credentials (push role, main only)
+        if: env.PUSH == 'true'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ECR_PUSH_ROLE_ARN }}
+          role-session-name: gha-ecr-push-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ECR (main only)
+        id: ecr
+        if: env.PUSH == 'true'
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Push the very image that was tested - not a rebuild
+      - name: Push runtime image (main only)
+        if: env.PUSH == 'true'
+        env:
+          IMAGE: ${{ steps.ecr.outputs.registry }}/${{ env.REPOSITORY }}:${{ github.sha }}
+        run: |
+          docker tag agent-worker:ci "$IMAGE"
+          docker push "$IMAGE"
+
+      - name: Summary
+        if: env.PUSH == 'true'
+        run: |
+          echo "### Pushed agent-worker image" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`${{ steps.ecr.outputs.registry }}/${REPOSITORY}:${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
