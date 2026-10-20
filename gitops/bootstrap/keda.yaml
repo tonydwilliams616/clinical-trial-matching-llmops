@@ -1,0 +1,33 @@
+# KEDA: scales the agent workers on the match job queue's depth, including down
+# to zero. Its operator reads the queue with the Pod Identity role created in
+# 30-platform (service account below must match the association).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: keda
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://kedacore.github.io/charts
+    chart: keda
+    targetRevision: 2.20.2
+    helm:
+      valuesObject:
+        serviceAccount:
+          operator:
+            name: keda-operator # must match the Pod Identity association
+        # Platform controllers stay on the managed system nodes
+        nodeSelector:
+          node-role: system
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: keda
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # KEDA's CRDs exceed the 256 KB annotation limit of client-side apply
+      - ServerSideApply=true
