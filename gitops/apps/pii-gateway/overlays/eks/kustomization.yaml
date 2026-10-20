@@ -7,7 +7,7 @@ resources:
 images:
   - name: pii-gateway
     newName: 359013545044.dkr.ecr.us-east-1.amazonaws.com/ctm/pii-gateway
-    newTag: e908f00ce1e2dff7741f80f6affe65d509d740fb
+    newTag: 247050bbb842a67bd7d06b3cd40b60d89a555837
 patches:
   - target:
       kind: Deployment
@@ -17,3 +17,11 @@ patches:
         path: /spec/template/spec/nodeSelector
         value:
           node-role: workload
+      # The project's Bedrock inference profile (18-data output
+      # bedrock_profile_arn). Not a secret: the gateway's IAM role is what
+      # limits who can call it.
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: BEDROCK_MODEL_ID
+          value: arn:aws:bedrock:us-east-1:359013545044:application-inference-profile/6l3qzrqrfare
