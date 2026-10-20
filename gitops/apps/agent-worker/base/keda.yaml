@@ -1,0 +1,34 @@
+# Scale on the match job queue. KEDA's operator reads the queue depth with its
+# own Pod Identity role (30-platform: sqs:GetQueueAttributes only).
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: keda-aws
+  namespace: agent-worker
+spec:
+  podIdentity:
+    provider: aws
+    identityOwner: keda # use the KEDA operator's credentials, not the worker's
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: agent-worker
+  namespace: agent-worker
+spec:
+  scaleTargetRef:
+    name: agent-worker
+  minReplicaCount: 0   # no jobs, no workers, no cost
+  maxReplicaCount: 3   # caps parallel load on the gateway and Bedrock
+  pollingInterval: 15  # seconds between queue checks
+  cooldownPeriod: 300  # wait 5 minutes of empty queue before scaling to zero
+  triggers:
+    - type: aws-sqs-queue
+      authenticationRef:
+        name: keda-aws
+      metadata:
+        queueURL: QUEUE_URL # set per environment by the overlays
+        awsRegion: us-east-1
+        queueLength: "2"         # target jobs per worker
+        scaleOnInFlight: "true"  # count jobs being worked on, so busy workers aren't removed
