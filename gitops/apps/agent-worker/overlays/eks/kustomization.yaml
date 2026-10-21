@@ -8,7 +8,7 @@ resources:
 images:
   - name: agent-worker
     newName: 359013545044.dkr.ecr.us-east-1.amazonaws.com/ctm/agent-worker
-    newTag: c55b4aa1e7e6af47024a9faaad5806a6e5060bde
+    newTag: 467df87a8d196a8a8fe38d322924544c13c7db66
 patches:
   - target:
       kind: Deployment
