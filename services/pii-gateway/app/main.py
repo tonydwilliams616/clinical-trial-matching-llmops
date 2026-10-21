@@ -36,10 +36,25 @@ log = logging.getLogger("pii_gateway")
 engine: dict[str, Masker] = {}
 
 
+# Start-up self-test: one line with one of each fixed-shape identifier. If any
+# survives masking, the gateway refuses to become ready - a broken recognizer
+# shows up as a pod that never turns Ready, not as hours of silent refusals.
+SELF_TEST = "Contact (617) 555-0147, email jane.d42@example.com, SSN 999-52-8841, MRN 4821937."
+
+
+def self_test(masker: Masker) -> None:
+    masked = masker.mask(SELF_TEST)["masked_text"]
+    leftovers = residual_identifiers(masked)
+    if leftovers:
+        raise RuntimeError(f"masking self-test failed: {leftovers} not masked")
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     started = time.perf_counter()
-    engine["masker"] = Masker()  # loads the spaCy model: a few seconds
+    masker = Masker()  # loads the spaCy model: a few seconds
+    self_test(masker)  # raises: the process exits and Kubernetes shows the restart
+    engine["masker"] = masker
     log.info(json.dumps({"event": "ready", "version": GIT_SHA,
                          "load_ms": round((time.perf_counter() - started) * 1000)}))
     yield

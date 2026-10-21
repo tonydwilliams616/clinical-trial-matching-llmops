@@ -13,6 +13,8 @@ Labels match the notes/v1 answer key, so the benchmark (PR 11) can score the
 gateway directly.
 """
 
+import tldextract
+import tldextract.tldextract
 from presidio_analyzer import AnalyzerEngine
 from presidio_analyzer.nlp_engine import NlpEngineProvider
 from presidio_anonymizer import AnonymizerEngine
@@ -33,6 +35,16 @@ LABELS = {
     "US_ZIP_CODE": "ZIP",
     "STREET_ADDRESS": "ADDRESS",
 }
+
+# Presidio's email recognizer validates each address's ending (.com, .org)
+# with tldextract, which by default DOWNLOADS the public suffix list on first
+# use and holds a file lock while it does. On EKS the gateway can resolve DNS
+# but its NetworkPolicy silently drops internet traffic, and tldextract sets no
+# timeout - so the download hung forever, the lock was never released, every
+# later email validation failed, and no email was masked (found in the phase 3
+# EKS session: refusals with leftover EMAIL, and worker timeouts).
+# Use only the suffix list bundled with tldextract: no network, ever.
+tldextract.tldextract.TLD_EXTRACTOR = tldextract.TLDExtract(suffix_list_urls=())
 
 # Large English model: best name/place detection. Baked into the image.
 SPACY_MODEL = "en_core_web_lg"
