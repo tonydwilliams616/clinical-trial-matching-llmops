@@ -84,9 +84,32 @@ def poll_once(*, sqs, data, gateway, s3, cfg: dict) -> int:
     return done
 
 
-def main() -> None:
-    import boto3  # imported here so the rest of the module tests without AWS libraries
+def aws_clients():
+    """S3 and SQS clients that fail fast and use regional S3 addresses.
 
+    In us-east-1, boto3 can still default to S3's legacy global hostname
+    (s3.amazonaws.com), which resolves to public IPs. The S3 interface endpoint
+    only covers s3.us-east-1.amazonaws.com, and the worker's egress
+    NetworkPolicy allows HTTPS inside the VPC only - so the global hostname
+    hangs. Found in the first EKS session: the worker sat silent loading data.
+
+    Short connect timeouts turn a blocked connection into a quick, logged
+    failure (and a visible pod restart) instead of a silent hang. The read
+    timeout stays above SQS long polling (20 s).
+    """
+    import boto3  # imported here so the rest of the module tests without AWS libraries
+    from botocore.config import Config
+
+    config = Config(
+        connect_timeout=5,
+        read_timeout=30,
+        retries={"mode": "standard", "max_attempts": 3},
+        s3={"us_east_1_regional_endpoint": "regional"},
+    )
+    return boto3.client("s3", config=config), boto3.client("sqs", config=config)
+
+
+def main() -> None:
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(message)s")
     cfg = settings()
     stopping = {"now": False}
@@ -96,7 +119,7 @@ def main() -> None:
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
 
-    s3, sqs = boto3.client("s3"), boto3.client("sqs")
+    s3, sqs = aws_clients()
     started = time.perf_counter()
     data = Dataset.from_s3(s3, cfg["raw_bucket"], cfg["data_bucket"])
     log.info(json.dumps({"event": "ready", "patients_with_notes": len(data.patient_ids_with_notes()),
