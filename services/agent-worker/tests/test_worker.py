@@ -61,3 +61,19 @@ def test_empty_queue_does_nothing():
 
 def test_parse_job_keeps_only_known_fields():
     assert parse_job('{"job_id": "a-1", "nct_id": "NCT12345678", "extra": "x"}') == {"job_id": "a-1", "nct_id": "NCT12345678"}
+
+
+class FailingGateway:
+    def assess(self, note, criterion):
+        from app.gateway import GatewayError
+        raise GatewayError("HTTP 502: model unavailable")
+
+
+def test_gateway_failure_is_logged_with_its_detail(caplog):
+    sqs, s3 = FakeSQS(['{"job_id": "demo-001", "nct_id": "NCT00000001"}']), FakeS3()
+    with caplog.at_level("ERROR", logger="agent_worker"):
+        assert poll(sqs, s3, gateway=FailingGateway()) == 0
+    logged = " ".join(r.getMessage() for r in caplog.records)
+    assert '"detail": "HTTP 502: model unavailable"' in logged
+    assert "Seen Jane Doe" not in logged
+    assert sqs.deleted == []

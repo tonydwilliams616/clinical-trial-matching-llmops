@@ -36,6 +36,18 @@ class GatewayClient:
         except urllib.error.HTTPError as exc:
             if exc.code == 422:
                 return {"verdict": "refused", "reason": "Gateway safety check stopped this note; nothing was sent to the model."}
-            raise GatewayError(f"gateway HTTP {exc.code}") from None
-        except (urllib.error.URLError, TimeoutError, KeyError, ValueError) as exc:
+            # The gateway's own short error text ("model unavailable"), never request content
+            raise GatewayError(f"HTTP {exc.code}: {_detail(exc)}") from None
+        except urllib.error.URLError as exc:
+            raise GatewayError(f"URLError: {type(exc.reason).__name__}: {exc.reason}"[:200]) from None
+        except (TimeoutError, KeyError, ValueError) as exc:
             raise GatewayError(type(exc).__name__) from None
+
+
+def _detail(exc: urllib.error.HTTPError) -> str:
+    """The gateway's `detail` string if it sent JSON, else nothing."""
+    try:
+        detail = json.loads(exc.read() or b"{}").get("detail")
+    except ValueError:
+        return "no detail"
+    return detail[:120] if isinstance(detail, str) else "no detail"

@@ -26,7 +26,7 @@ import signal
 import time
 
 from .data import Dataset
-from .gateway import GatewayClient
+from .gateway import GatewayClient, GatewayError
 from .matcher import run_job
 
 JOB_ID = re.compile(r"^[A-Za-z0-9-]{1,64}$")
@@ -76,8 +76,11 @@ def poll_once(*, sqs, data, gateway, s3, cfg: dict) -> int:
         try:
             handle(message, data=data, gateway=gateway, s3=s3, cfg=cfg)
         except Exception as exc:  # leave the message: SQS retries it, then dead-letters it
-            log.error(json.dumps({"event": "job_failed", "message_id": message.get("MessageId"),
-                                  "error": type(exc).__name__}))
+            failure = {"event": "job_failed", "message_id": message.get("MessageId"),
+                       "error": type(exc).__name__}
+            if isinstance(exc, GatewayError):
+                failure["detail"] = str(exc)  # status code or connection reason - never note text
+            log.error(json.dumps(failure))
             continue
         sqs.delete_message(QueueUrl=cfg["queue_url"], ReceiptHandle=message["ReceiptHandle"])
         done += 1
