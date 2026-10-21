@@ -26,3 +26,36 @@ RESIDUAL_PATTERNS = {
 def residual_identifiers(text: str) -> list[str]:
     """Labels of identifier types still present in text (empty list = safe)."""
     return sorted(label for label, pattern in RESIDUAL_PATTERNS.items() if pattern.search(text))
+
+
+PLACEHOLDER = re.compile(r"<[A-Z_]+>")
+
+
+def shape(text: str) -> str:
+    """Text with letters and digits generalised, placeholders kept: safe to log.
+
+    "Seen <PERSON>, j.s42@example.com" -> "Aaaa <PERSON>, a.a99@aaaaaaa.aaa"
+    Shows WHAT kind of thing slipped through without revealing its value.
+    """
+    out, last = [], 0
+    for m in PLACEHOLDER.finditer(text):
+        out.append(_generalise(text[last:m.start()]))
+        out.append(m.group())
+        last = m.end()
+    out.append(_generalise(text[last:]))
+    return "".join(out)
+
+
+def _generalise(part: str) -> str:
+    return re.sub(r"[a-z]", "a", re.sub(r"[A-Z]", "A", re.sub(r"\d", "9", part)))
+
+
+def residual_shapes(text: str, context: int = 15) -> list[str]:
+    """For each leftover identifier: its label and the shape of it plus a little
+    text before it - enough to diagnose a refusal from the logs alone."""
+    shapes = []
+    for label, pattern in RESIDUAL_PATTERNS.items():
+        for m in pattern.finditer(text):
+            start = max(0, m.start() - context)
+            shapes.append(f"{label}: {shape(text[start:m.start()])}[[{shape(m.group())}]]")
+    return shapes[:5]

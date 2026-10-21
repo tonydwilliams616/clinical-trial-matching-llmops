@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 
 from .assess import ModelUnavailable, bedrock_dependency, call_model, model_id, parse_reply
 from .masker import Masker
-from .safety import residual_identifiers
+from .safety import residual_identifiers, residual_shapes
 
 MAX_TEXT_CHARS = int(os.getenv("MAX_TEXT_CHARS", "20000"))
 GIT_SHA = os.getenv("GIT_SHA", "dev")
@@ -114,9 +114,12 @@ def assess(request: AssessRequest, client=Depends(bedrock_dependency)) -> dict:
     # 1. Mask, then 2. check independently that nothing obvious slipped through.
     # Either failing means nothing is sent - there is no "send it anyway" path.
     masked = engine["masker"].mask(request.note)
-    leftovers = residual_identifiers(masked["masked_text"] + "\n" + request.criterion)
+    checked = masked["masked_text"] + "\n" + request.criterion
+    leftovers = residual_identifiers(checked)
     if leftovers:
-        log.warning(json.dumps({"event": "assess_refused", "leftover": leftovers}))
+        # Shapes, never values: letters and digits generalised, placeholders kept
+        log.warning(json.dumps({"event": "assess_refused", "leftover": leftovers,
+                                "shapes": residual_shapes(checked)}))
         raise HTTPException(status_code=422, detail="masking incomplete; nothing was sent to the model")
 
     # 3. Ask the model; 4. an unreadable reply becomes "unclear", never a guess.
