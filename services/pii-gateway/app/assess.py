@@ -13,6 +13,7 @@ reply parsing can be unit-tested on their own.
 """
 
 import json
+import logging
 import os
 from functools import lru_cache
 
@@ -99,6 +100,8 @@ def get_bedrock_client():
 
     return boto3.client(
         "bedrock-runtime",
+        # Explicit: older botocore reads only AWS_DEFAULT_REGION, not AWS_REGION
+        region_name=os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION"),
         config=Config(
             connect_timeout=5,
             read_timeout=30,
@@ -116,4 +119,11 @@ def bedrock_dependency():
     """
     if model_id() is None:
         return None
-    return get_bedrock_client()
+    try:
+        return get_bedrock_client()
+    except Exception as exc:  # e.g. no region: a tidy 502, not an unhandled 500
+        from fastapi import HTTPException
+
+        logging.getLogger("pii_gateway").error(
+            json.dumps({"event": "assess_client_error", "error": type(exc).__name__}))
+        raise HTTPException(status_code=502, detail="model unavailable") from None

@@ -65,3 +65,15 @@ def test_note_and_criterion_are_fenced_as_data():
     message = build_user_message("No uncontrolled hypertension", "Seen <PERSON>.")
     assert message.index("<criterion>") < message.index("<note>")
     assert "</note>" in message
+
+
+def test_shape_hides_values_but_keeps_structure():
+    from app.safety import shape
+    assert shape("Seen <PERSON>, j.s42@example.com") == "Aaaa <PERSON>, a.a99@aaaaaaa.aaa"
+
+
+def test_residual_shapes_label_each_leftover_with_context():
+    from app.safety import residual_shapes
+    shapes = residual_shapes("Contact: <PHONE>, email john.s42@example.com.")
+    assert shapes == ["EMAIL: <PHONE>, aaaaa [[aaaa.a99@aaaaaaa.aaa]]"]
+    assert "john" not in shapes[0] and "example" not in shapes[0]

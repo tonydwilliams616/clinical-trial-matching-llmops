@@ -111,3 +111,26 @@ def test_model_failure_is_502_without_details(client, fake):
 def test_not_configured_is_503(client, monkeypatch):
     monkeypatch.delenv("BEDROCK_MODEL_ID", raising=False)
     assert post(client).status_code == 503
+
+
+def test_refusal_logs_shapes_not_values(client, fake, monkeypatch, caplog):
+    monkeypatch.setattr(engine["masker"], "mask",
+                        lambda text: {"masked_text": text, "findings": [], "counts": {}})
+    with caplog.at_level("WARNING", logger="pii_gateway"):
+        assert post(client).status_code == 422
+    logged = " ".join(r.getMessage() for r in caplog.records)
+    assert "assess_refused" in logged and "[[" in logged
+    for value in IDENTIFIERS:
+        assert value not in logged, value
+
+
+def test_client_creation_failure_is_502_not_500(client, monkeypatch):
+    import app.assess as assess_module
+    monkeypatch.setenv("BEDROCK_MODEL_ID", PROFILE)
+
+    def broken():
+        raise RuntimeError("You must specify a region.")
+    monkeypatch.setattr(assess_module, "get_bedrock_client", broken)
+    response = post(client)
+    assert response.status_code == 502
+    assert "region" not in response.text
