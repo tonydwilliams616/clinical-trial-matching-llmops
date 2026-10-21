@@ -3,7 +3,11 @@ One match job: shortlist synthetic patients for one trial, with reasons.
 
     1. hard criteria in code (hard.py)        - exact, free
     2. free-text criteria via the PII gateway  - masked, then the model
-    3. shortlist = no free-text criterion judged "likely_fails"
+    3. sort each candidate into one of three groups:
+         shortlisted            - no criterion likely failed, and at least one likely met
+         not_shortlisted        - at least one criterion likely failed
+         insufficient_evidence  - nothing failed, but nothing was confirmed either
+                                  (every answer unclear or refused): a person must look
 
 Everything in the result is a suggestion for human review - never an
 eligibility decision. Candidate and criterion caps keep each job's model
@@ -15,6 +19,12 @@ from concurrent.futures import ThreadPoolExecutor
 
 from . import hard
 from .criteria import as_question, select_free_text, split_criteria
+
+
+def status_for(meets: int, fails: int) -> str:
+    if fails:
+        return "not_shortlisted"
+    return "shortlisted" if meets else "insufficient_evidence"
 
 
 def run_job(job: dict, data, gateway, *, reference: datetime.date,
@@ -41,19 +51,26 @@ def run_job(job: dict, data, gateway, *, reference: datetime.date,
     for (pid, question), verdict in zip(pairs, verdicts):
         by_patient[pid].append({"criterion": question, **verdict})
 
-    # 3. Shortlist: nothing judged likely to fail. "unclear" stays in, flagged for review.
+    # 3. Three groups. "No evidence against" is not the same as "evidence for":
+    #    a candidate whose every answer was unclear or refused is never shortlisted.
     results = []
     for pid, hard_reasons in candidates:
         assessments = by_patient[pid]
         verdict_list = [a["verdict"] for a in assessments]
+        meets, fails = verdict_list.count("likely_meets"), verdict_list.count("likely_fails")
         results.append({
             "patient_id": pid,
-            "shortlisted": "likely_fails" not in verdict_list,
+            "status": status_for(meets, fails),
             "needs_review": True,
+            "meets": meets,
+            "fails": fails,
             "unclear": verdict_list.count("unclear") + verdict_list.count("refused"),
             "hard_criteria": hard_reasons,
             "free_text_criteria": assessments,
         })
+    # Strongest candidates first: shortlisted by most criteria met, then the rest
+    order = {"shortlisted": 0, "insufficient_evidence": 1, "not_shortlisted": 2}
+    results.sort(key=lambda r: (order[r["status"]], -r["meets"], r["patient_id"]))
 
     return {
         "job_id": job["job_id"],
@@ -67,7 +84,9 @@ def run_job(job: dict, data, gateway, *, reference: datetime.date,
             "failed_hard_criteria": screened_out,
             "passed_hard_criteria": len(passed),
             "assessed": len(candidates),
-            "shortlisted": sum(r["shortlisted"] for r in results),
+            "shortlisted": sum(r["status"] == "shortlisted" for r in results),
+            "not_shortlisted": sum(r["status"] == "not_shortlisted" for r in results),
+            "insufficient_evidence": sum(r["status"] == "insufficient_evidence" for r in results),
             "model_questions": len(pairs),
         },
         "free_text_criteria": questions,
