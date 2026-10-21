@@ -44,3 +44,25 @@ def test_server_errors_raise_so_the_job_retries():
         server.shutdown()
         return
     raise AssertionError("expected GatewayError")
+
+
+def test_server_error_carries_status_and_gateway_detail():
+    server, client = serve(502, {"detail": "model unavailable"})
+    try:
+        client.assess("note text that must not leak", "criterion")
+    except GatewayError as exc:
+        assert str(exc) == "HTTP 502: model unavailable"
+        assert "note text" not in str(exc)
+        server.shutdown()
+        return
+    raise AssertionError("expected GatewayError")
+
+
+def test_connection_failure_carries_the_reason():
+    client = GatewayClient("http://127.0.0.1:9", timeout=2)  # nothing listens on port 9
+    try:
+        client.assess("note", "criterion")
+    except GatewayError as exc:
+        assert str(exc).startswith("URLError: ")
+        return
+    raise AssertionError("expected GatewayError")
