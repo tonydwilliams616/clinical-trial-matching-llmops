@@ -25,6 +25,7 @@ import re
 import signal
 import time
 
+from . import metrics
 from .data import Dataset
 from .gateway import GatewayClient, GatewayError
 from .matcher import run_job
@@ -63,6 +64,7 @@ def handle(message: dict, *, data, gateway, s3, cfg: dict) -> dict:
                      max_candidates=cfg["max_candidates"], max_criteria=cfg["max_criteria"])
     s3.put_object(Bucket=cfg["data_bucket"], Key=f"results/v1/{job['job_id']}.json",
                   Body=json.dumps(result, indent=2).encode(), ContentType="application/json")
+    metrics.record_result(result, time.perf_counter() - started)
     log.info(json.dumps({"event": "job_done", "job_id": job["job_id"], "nct_id": job["nct_id"],
                          **result["counts"], "seconds": round(time.perf_counter() - started, 1)}))
     return result
@@ -78,7 +80,9 @@ def poll_once(*, sqs, data, gateway, s3, cfg: dict) -> int:
         except Exception as exc:  # leave the message: SQS retries it, then dead-letters it
             failure = {"event": "job_failed", "message_id": message.get("MessageId"),
                        "error": type(exc).__name__}
+            metrics.JOBS.labels(outcome="failed").inc()
             if isinstance(exc, GatewayError):
+                metrics.GATEWAY_ERRORS.inc()
                 failure["detail"] = str(exc)  # status code or connection reason - never note text
             log.error(json.dumps(failure))
             continue
@@ -122,9 +126,13 @@ def main() -> None:
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
 
+    from prometheus_client import start_http_server
+
+    start_http_server(int(os.getenv("METRICS_PORT", "9100")))  # GET /metrics for Prometheus
     s3, sqs = aws_clients()
     started = time.perf_counter()
     data = Dataset.from_s3(s3, cfg["raw_bucket"], cfg["data_bucket"])
+    metrics.DATASET_LOAD_SECONDS.set(time.perf_counter() - started)
     log.info(json.dumps({"event": "ready", "patients_with_notes": len(data.patient_ids_with_notes()),
                          "load_seconds": round(time.perf_counter() - started, 1)}))
     gateway = GatewayClient(cfg["gateway_url"])

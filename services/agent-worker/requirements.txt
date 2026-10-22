@@ -1,1 +1,2 @@
 boto3==1.43.100
+prometheus-client==0.25.0
