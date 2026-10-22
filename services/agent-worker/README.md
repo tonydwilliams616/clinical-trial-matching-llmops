@@ -27,6 +27,7 @@ The worker never calls Bedrock and never logs note text. Raw notes leave it only
 | `GATEWAY_URL` | `http://pii-gateway.pii-gateway` | in-cluster gateway Service |
 | `REFERENCE_DATE` | `2026-10-01` | "today" for ages, matching the datasets |
 | `MAX_CANDIDATES` / `MAX_CRITERIA` | `20` / `5` | per-job caps |
+| `METRICS_PORT` | `9100` | Prometheus metrics (`/metrics`): jobs, durations, answers by verdict, candidates by status, gateway errors |
 
 ## Tests
 
