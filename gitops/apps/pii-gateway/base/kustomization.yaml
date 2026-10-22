@@ -8,3 +8,4 @@ resources:
   - hpa.yaml
   - pdb.yaml
   - networkpolicy.yaml
+  - networkpolicy-monitoring.yaml

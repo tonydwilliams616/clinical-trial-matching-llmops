@@ -6,6 +6,8 @@
 # CreateNamespace option here. Its pods wait for a Karpenter workload node; the
 # retry covers the minute or so before the NodePool exists on a fresh cluster.
 # The Pod Identity association for its service account is created by 20-eks.
+# Its PodMonitor needs the monitoring stack's CRDs, so dry-run is skipped for
+# missing resource types and the retry covers the wait.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -24,6 +26,8 @@ spec:
     automated:
       prune: true
       selfHeal: true
+    syncOptions:
+      - SkipDryRunOnMissingResource=true
     retry:
       limit: 10
       backoff:

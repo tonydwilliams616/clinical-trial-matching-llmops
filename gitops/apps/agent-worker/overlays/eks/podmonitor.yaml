@@ -1,0 +1,15 @@
+# Tells Prometheus to read each worker's /metrics (port 9100) every 15 seconds.
+# Workers exist only while KEDA runs them, so their series come and go.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: agent-worker
+  namespace: agent-worker
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agent-worker
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s

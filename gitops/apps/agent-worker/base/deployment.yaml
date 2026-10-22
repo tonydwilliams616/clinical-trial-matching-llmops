@@ -30,6 +30,9 @@ spec:
       containers:
         - name: agent-worker
           image: agent-worker # set per environment by the overlays
+          ports:
+            - name: metrics # Prometheus scrapes /metrics here (PodMonitor in the EKS overlay)
+              containerPort: 9100
           # No probes: a queue consumer serves no traffic. If the process dies,
           # Kubernetes restarts it and the unfinished job reappears on the queue.
           env:
