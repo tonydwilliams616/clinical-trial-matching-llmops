@@ -6,6 +6,7 @@ pii-gateway HTTP API.
     POST /v1/mask   {"text": "..."} -> masked text + what was found (no values)
     POST /v1/assess {"note": "...", "criterion": "..."} -> mask the note, then ask
                     the model whether the patient appears to meet the criterion
+    GET  /metrics   Prometheus metrics (numbers only - see metrics.py)
 
 Only /v1/assess talks to the model, and only after masking plus an independent
 leftover-identifier check (safety.py). If either fails, nothing is sent.
@@ -20,9 +21,12 @@ import time
 from contextlib import asynccontextmanager
 from typing import Literal
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 
+from . import metrics
 from .assess import ModelUnavailable, bedrock_dependency, call_model, model_id, parse_reply
 from .masker import Masker
 from .safety import residual_identifiers, residual_shapes
@@ -64,6 +68,25 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="pii-gateway", version=GIT_SHA, lifespan=lifespan)
 
 
+@app.middleware("http")
+async def count_requests(request: Request, call_next):
+    started = time.perf_counter()
+    endpoint = metrics.endpoint_label(request.url.path)
+    status = 500
+    try:
+        response = await call_next(request)
+        status = response.status_code
+        return response
+    finally:
+        metrics.REQUESTS.labels(endpoint=endpoint, status=str(status)).inc()
+        metrics.REQUEST_SECONDS.labels(endpoint=endpoint).observe(time.perf_counter() - started)
+
+
+@app.get("/metrics")
+def prometheus_metrics() -> Response:
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
 class MaskRequest(BaseModel):
     text: str = Field(min_length=1, max_length=MAX_TEXT_CHARS)
 
@@ -99,6 +122,7 @@ def readyz() -> dict:
 def mask(request: MaskRequest) -> dict:
     started = time.perf_counter()
     result = engine["masker"].mask(request.text)
+    metrics.record_masked(result["counts"])
     log.info(json.dumps({
         "event": "mask",
         "chars": len(request.text),
@@ -129,21 +153,30 @@ def assess(request: AssessRequest, client=Depends(bedrock_dependency)) -> dict:
     # 1. Mask, then 2. check independently that nothing obvious slipped through.
     # Either failing means nothing is sent - there is no "send it anyway" path.
     masked = engine["masker"].mask(request.note)
+    metrics.record_masked(masked["counts"])
     checked = masked["masked_text"] + "\n" + request.criterion
     leftovers = residual_identifiers(checked)
     if leftovers:
+        for label in leftovers:
+            metrics.REFUSALS.labels(label=label).inc()
         # Shapes, never values: letters and digits generalised, placeholders kept
         log.warning(json.dumps({"event": "assess_refused", "leftover": leftovers,
                                 "shapes": residual_shapes(checked)}))
         raise HTTPException(status_code=422, detail="masking incomplete; nothing was sent to the model")
 
     # 3. Ask the model; 4. an unreadable reply becomes "unclear", never a guess.
+    model_started = time.perf_counter()
     try:
         reply, usage = call_model(client, profile, request.criterion, masked["masked_text"])
     except ModelUnavailable as exc:
+        metrics.BEDROCK_ERRORS.inc()
         log.error(json.dumps({"event": "assess_model_error", "error": str(exc)}))
         raise HTTPException(status_code=502, detail="model unavailable") from None
+    metrics.BEDROCK_SECONDS.observe(time.perf_counter() - model_started)
+    metrics.TOKENS.labels(direction="input").inc(usage.get("inputTokens") or 0)
+    metrics.TOKENS.labels(direction="output").inc(usage.get("outputTokens") or 0)
     verdict, reason = parse_reply(reply)
+    metrics.VERDICTS.labels(verdict=verdict).inc()
 
     log.info(json.dumps({
         "event": "assess",
