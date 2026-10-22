@@ -5,4 +5,5 @@ resources:
   - serviceaccount.yaml
   - deployment.yaml
   - networkpolicy.yaml
+  - networkpolicy-monitoring.yaml
   - keda.yaml

@@ -1,0 +1,15 @@
+# Tells Prometheus to read the gateway's /metrics every 15 seconds. EKS only:
+# the kind test cluster has no Prometheus (and no PodMonitor CRD).
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: pii-gateway
+  namespace: pii-gateway
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pii-gateway
+  podMetricsEndpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
