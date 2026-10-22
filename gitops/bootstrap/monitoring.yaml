@@ -1,0 +1,96 @@
+# Prometheus, Grafana and Alertmanager (kube-prometheus-stack), synced from Git
+# on every spin-up. Prometheus collects the gateway's and workers' metrics;
+# Grafana draws them; Alertmanager will deliver alerts (SLO PR).
+#
+# Ephemeral by design: no persistent volumes (the cluster is destroyed nightly),
+# 12 hours of data on node-local disk (emptyDir). Reached only via port-forward.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: kube-prometheus-stack
+    targetRevision: 92.10.1
+    helm:
+      valuesObject:
+        # EKS runs the control plane for us: etcd, the scheduler and the
+        # controller manager can't be scraped, and kube-proxy's metrics listen
+        # on localhost only. Scraping them would just show targets down and
+        # fire alerts nobody can act on.
+        kubeEtcd: { enabled: false }
+        kubeControllerManager: { enabled: false }
+        kubeScheduler: { enabled: false }
+        kubeProxy: { enabled: false }
+        defaultRules:
+          rules:
+            etcd: false
+            kubeControllerManager: false
+            kubeSchedulerAlerting: false
+            kubeSchedulerRecording: false
+            kubeProxy: false
+
+        # Controllers on the managed system nodes, like the rest of the platform
+        prometheusOperator:
+          nodeSelector: { node-role: system }
+          admissionWebhooks:
+            patch:
+              nodeSelector: { node-role: system }
+        kube-state-metrics:
+          nodeSelector: { node-role: system }
+
+        prometheus:
+          prometheusSpec:
+            # Pick up ServiceMonitors, PodMonitors and rules from every namespace,
+            # not only ones labelled for this Helm release
+            serviceMonitorSelectorNilUsesHelmValues: false
+            podMonitorSelectorNilUsesHelmValues: false
+            ruleSelectorNilUsesHelmValues: false
+            retention: 12h
+            retentionSize: 2GB
+            nodeSelector: { node-role: workload }
+            # Karpenter must not move Prometheus to repack nodes mid-session
+            podMetadata:
+              annotations:
+                karpenter.sh/do-not-disrupt: "true"
+            resources:
+              requests: { cpu: 200m, memory: 512Mi }
+              limits: { memory: 1Gi }
+
+        alertmanager:
+          alertmanagerSpec:
+            nodeSelector: { node-role: workload }
+            podMetadata:
+              annotations:
+                karpenter.sh/do-not-disrupt: "true"
+            resources:
+              requests: { cpu: 25m, memory: 64Mi }
+              limits: { memory: 128Mi }
+
+        grafana:
+          nodeSelector: { node-role: workload }
+          podAnnotations:
+            karpenter.sh/do-not-disrupt: "true"
+          # Admin login from AWS Secrets Manager via External Secrets
+          # (gitops/platform/monitoring) - never the chart's default password
+          admin:
+            existingSecret: grafana-admin
+            userKey: admin-user
+            passwordKey: admin-password
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 512Mi }
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # The Prometheus Operator's CRDs exceed the 256 KB client-side apply limit
+      - ServerSideApply=true
