@@ -1,0 +1,24 @@
+# Lets this service send traces to Tempo (monitoring namespace, OTLP HTTP on
+# 4318) and nowhere else in that namespace. EKS only, like Tempo itself; adds
+# to the default-deny policy and the existing egress rules.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-trace-export
+  namespace: pii-gateway
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pii-gateway
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tempo
+      ports:
+        - port: 4318
+          protocol: TCP

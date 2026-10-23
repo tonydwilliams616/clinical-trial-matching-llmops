@@ -6,10 +6,11 @@ kind: Kustomization
 resources:
   - ../../base
   - podmonitor.yaml
+  - networkpolicy-tracing.yaml
 images:
   - name: agent-worker
     newName: 359013545044.dkr.ecr.us-east-1.amazonaws.com/ctm/agent-worker
-    newTag: f4510086104c61d4c440f221eefdef48e1ecf80f
+    newTag: d164af3592c2fe534256d95e82963e16dec7bc55
 patches:
   - target:
       kind: Deployment
@@ -34,6 +35,13 @@ patches:
         value:
           name: DATA_BUCKET
           value: ctm-deidentified-359013545044
+      # Send traces to Tempo (allowed by networkpolicy-tracing.yaml). Without
+      # this variable the app creates spans but exports nothing.
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://tempo.monitoring.svc:4318
   - target:
       kind: ScaledObject
       name: agent-worker
