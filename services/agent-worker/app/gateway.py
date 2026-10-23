@@ -15,6 +15,11 @@ import json
 import urllib.error
 import urllib.request
 
+from opentelemetry import propagate
+from opentelemetry.trace import SpanKind, Status, StatusCode
+
+from .tracing import tracer
+
 
 class GatewayError(Exception):
     pass
@@ -26,14 +31,35 @@ class GatewayClient:
         self.timeout = timeout
 
     def assess(self, note: str, criterion: str) -> dict:
+        # One client span per question. Its context travels to the gateway in a
+        # W3C traceparent header, so the gateway's spans join this job's trace.
+        # Status code and verdict only: never the note, criterion or reason.
+        with tracer.start_as_current_span(
+            "gateway.assess", kind=SpanKind.CLIENT,
+            record_exception=False, set_status_on_exception=False,
+            attributes={"http.request.method": "POST", "url.full": self.url},
+        ) as span:
+            try:
+                result = self._post(note, criterion, span)
+            except GatewayError as exc:
+                span.set_attribute("error.type", str(exc).split(":")[0])  # e.g. "HTTP 502", "URLError"
+                span.set_status(Status(StatusCode.ERROR, "gateway error"))
+                raise
+            span.set_attribute("ctm.verdict", result["verdict"])
+            return result
+
+    def _post(self, note: str, criterion: str, span) -> dict:
         body = json.dumps({"note": note, "criterion": criterion}).encode()
-        request = urllib.request.Request(self.url, data=body, method="POST",
-                                         headers={"content-type": "application/json"})
+        headers = {"content-type": "application/json"}
+        propagate.inject(headers)  # adds traceparent for the current span
+        request = urllib.request.Request(self.url, data=body, method="POST", headers=headers)
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                span.set_attribute("http.response.status_code", response.status)
                 reply = json.load(response)
             return {"verdict": reply["verdict"], "reason": reply["reason"]}
         except urllib.error.HTTPError as exc:
+            span.set_attribute("http.response.status_code", exc.code)
             if exc.code == 422:
                 return {"verdict": "refused", "reason": "Gateway safety check stopped this note; nothing was sent to the model."}
             # The gateway's own short error text ("model unavailable"), never request content
