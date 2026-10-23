@@ -1,0 +1,23 @@
+# Adds Tempo to Grafana as a data source. Grafana's sidecar loads any
+# ConfigMap in this namespace labelled grafana_datasource: "1" (the same way
+# the chart adds Prometheus). Explore -> Tempo then finds traces by service,
+# duration or trace ID.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: datasource-tempo
+  namespace: monitoring
+  labels:
+    grafana_datasource: "1"
+data:
+  tempo.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Tempo
+        type: tempo
+        uid: tempo
+        access: proxy
+        url: http://tempo.monitoring.svc:3200
+        jsonData:
+          nodeGraph:
+            enabled: true

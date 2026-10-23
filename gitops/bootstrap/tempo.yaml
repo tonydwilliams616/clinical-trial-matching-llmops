@@ -1,0 +1,57 @@
+# Grafana Tempo: stores traces, so one match job can be followed from the
+# queue through the worker and the gateway to Bedrock. Grafana reads it (the
+# data source is in gitops/platform/monitoring). Apps send traces over OTLP
+# HTTP to tempo.monitoring.svc:4318 - added app by app in later PRs.
+#
+# Ephemeral like the rest of monitoring: single binary, no persistent volume,
+# 12 hours of traces on a size-capped node-local disk. Spans carry timings,
+# counts and fixed labels only - never note text or identifiers.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tempo
+  namespace: argocd
+spec:
+  project: default
+  source:
+    # Tempo's chart moved from grafana/helm-charts to grafana-community in 2026
+    repoURL: https://grafana-community.github.io/helm-charts
+    chart: tempo
+    targetRevision: 3.2.1
+    helm:
+      valuesObject:
+        tempo:
+          tag: 3.1.1 # pinned rather than following the chart's default
+          retention: 12h
+          # No usage reports sent to Grafana Labs
+          reportingEnabled: false
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 512Mi }
+          extraEnv:
+            # Keep Go's garbage collector under the memory limit
+            - name: GOMEMLIMIT
+              value: 450MiB
+          # Traces and the write-ahead log on node-local disk (emptyDir), capped
+          extraVolumeMounts:
+            - name: tempo-data
+              mountPath: /var/tempo
+        extraVolumes:
+          - name: tempo-data
+            emptyDir:
+              sizeLimit: 2Gi
+        persistence:
+          enabled: false
+        nodeSelector: { node-role: workload }
+        # Karpenter must not move Tempo to repack nodes mid-session
+        podAnnotations:
+          karpenter.sh/do-not-disrupt: "true"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
