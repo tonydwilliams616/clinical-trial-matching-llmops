@@ -1,0 +1,144 @@
+# Service level objectives and alert rules for the matching flow.
+#
+# Two SLOs on the gateway's /v1/assess (the step every match depends on):
+#   availability  99% of requests are not server errors (5xx)
+#   latency       95% of requests finish within 5 seconds
+# A 422 is not an error: it is the safety check refusing to send text that
+# still holds an identifier - the system doing its job. It has its own alert.
+#
+# Alerts use multi-window burn rates: "how fast are we spending the error
+# budget?" A fast burn (14.4x, over 1 h and 5 m) is critical; a slow burn (6x,
+# over 6 h and 30 m) is a warning. The short window makes an alert clear
+# quickly once the problem stops. The burn rates assume a 30-day budget; the
+# cluster lives for hours and keeps 12 h of data, so read them as speed, not
+# as budget left. Targets are starting points, to revisit after load tests.
+#
+# Alerts show in Alertmanager; delivering them to a phone is a follow-up.
+# Expressions use numbers and fixed labels only - never note text.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: ctm-slo
+  namespace: monitoring
+spec:
+  groups:
+    - name: ctm-slo-recording
+      interval: 30s
+      rules:
+        # Share of assess requests that were server errors, per window
+        - record: ctm:assess_error_ratio:rate5m
+          expr: sum(rate(ctm_gateway_requests_total{endpoint="/v1/assess",status=~"5.."}[5m])) / sum(rate(ctm_gateway_requests_total{endpoint="/v1/assess"}[5m]))
+        - record: ctm:assess_error_ratio:rate30m
+          expr: sum(rate(ctm_gateway_requests_total{endpoint="/v1/assess",status=~"5.."}[30m])) / sum(rate(ctm_gateway_requests_total{endpoint="/v1/assess"}[30m]))
+        - record: ctm:assess_error_ratio:rate1h
+          expr: sum(rate(ctm_gateway_requests_total{endpoint="/v1/assess",status=~"5.."}[1h])) / sum(rate(ctm_gateway_requests_total{endpoint="/v1/assess"}[1h]))
+        - record: ctm:assess_error_ratio:rate6h
+          expr: sum(rate(ctm_gateway_requests_total{endpoint="/v1/assess",status=~"5.."}[6h])) / sum(rate(ctm_gateway_requests_total{endpoint="/v1/assess"}[6h]))
+        # Share of assess requests slower than 5 s, per window. The le label
+        # may read "5" or "5.0" depending on how it was exposed, hence the regex.
+        - record: ctm:assess_slow_ratio:rate5m
+          expr: 1 - sum(rate(ctm_gateway_request_seconds_bucket{endpoint="/v1/assess",le=~"5(\\.0)?"}[5m])) / sum(rate(ctm_gateway_request_seconds_count{endpoint="/v1/assess"}[5m]))
+        - record: ctm:assess_slow_ratio:rate30m
+          expr: 1 - sum(rate(ctm_gateway_request_seconds_bucket{endpoint="/v1/assess",le=~"5(\\.0)?"}[30m])) / sum(rate(ctm_gateway_request_seconds_count{endpoint="/v1/assess"}[30m]))
+        - record: ctm:assess_slow_ratio:rate1h
+          expr: 1 - sum(rate(ctm_gateway_request_seconds_bucket{endpoint="/v1/assess",le=~"5(\\.0)?"}[1h])) / sum(rate(ctm_gateway_request_seconds_count{endpoint="/v1/assess"}[1h]))
+        - record: ctm:assess_slow_ratio:rate6h
+          expr: 1 - sum(rate(ctm_gateway_request_seconds_bucket{endpoint="/v1/assess",le=~"5(\\.0)?"}[6h])) / sum(rate(ctm_gateway_request_seconds_count{endpoint="/v1/assess"}[6h]))
+
+    - name: ctm-slo-alerts
+      rules:
+        # Availability: budget 1% errors -> 14.4x = 14.4%, 6x = 6%
+        - alert: CtmAssessErrorBudgetFastBurn
+          expr: ctm:assess_error_ratio:rate1h > 0.144 and ctm:assess_error_ratio:rate5m > 0.144
+          for: 2m
+          labels:
+            severity: critical
+            slo: assess-availability
+          annotations:
+            summary: Assess requests are failing fast enough to spend a month's error budget in about two days.
+            description: Over 14.4% of /v1/assess requests returned 5xx in the last hour and 5 minutes. Check Bedrock errors on the dashboard and the gateway logs (502 = model unavailable, 503 = not ready or not configured).
+        - alert: CtmAssessErrorBudgetSlowBurn
+          expr: ctm:assess_error_ratio:rate6h > 0.06 and ctm:assess_error_ratio:rate30m > 0.06
+          for: 15m
+          labels:
+            severity: warning
+            slo: assess-availability
+          annotations:
+            summary: Assess requests are failing steadily above the 99% availability target.
+            description: Over 6% of /v1/assess requests returned 5xx in the last 6 hours and 30 minutes.
+        # Latency: budget 5% slow -> 14.4x = 72%, 6x = 30%
+        - alert: CtmAssessLatencyFastBurn
+          expr: ctm:assess_slow_ratio:rate1h > 0.72 and ctm:assess_slow_ratio:rate5m > 0.72
+          for: 2m
+          labels:
+            severity: critical
+            slo: assess-latency
+          annotations:
+            summary: Most assess requests are taking longer than 5 seconds.
+            description: Over 72% of /v1/assess requests were slower than 5 s in the last hour and 5 minutes. Compare with Bedrock latency on the dashboard to see whether the model or the gateway is slow.
+        - alert: CtmAssessLatencySlowBurn
+          expr: ctm:assess_slow_ratio:rate6h > 0.30 and ctm:assess_slow_ratio:rate30m > 0.30
+          for: 15m
+          labels:
+            severity: warning
+            slo: assess-latency
+          annotations:
+            summary: Assess requests are steadily slower than the latency target.
+            description: Over 30% of /v1/assess requests were slower than 5 s in the last 6 hours and 30 minutes.
+
+    - name: ctm-matching-alerts
+      rules:
+        # Each synthetic note's identifiers should all be masked, so a refusal
+        # means masking missed something (as with EMAIL on 21 Oct). Nothing is
+        # sent to the model when this happens - but matches go unanswered.
+        - alert: CtmSafetyNetRefusing
+          expr: sum(increase(ctm_gateway_refusals_total[15m])) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: The safety check is refusing notes - masking is missing identifiers.
+            description: "{{ $value | humanize }} requests refused in the last 15 minutes because an identifier survived masking. Nothing reached the model. See the refusals panel for the identifier type and the gateway logs for the shapes."
+        - alert: CtmBedrockErrors
+          expr: sum(rate(ctm_gateway_bedrock_errors_total[10m])) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Bedrock calls are failing.
+            description: The gateway has had failed model calls for 10 minutes. Common causes are throttling, access to the inference profile, or the VPC endpoint.
+        - alert: CtmGatewayDown
+          expr: absent(up{namespace="pii-gateway"} == 1)
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: Prometheus cannot reach any PII gateway pod.
+            description: No gateway pod has answered a scrape for 5 minutes, so no matching can happen. Check the pii-gateway Argo CD app and pod status.
+        # Workers scale to zero on purpose, so "no workers" alone is fine.
+        # Jobs waiting with no workers for 5 minutes means scaling is broken.
+        - alert: CtmQueueNotDraining
+          expr: sum(keda_scaler_metrics_value{scaledObject="agent-worker"}) > 0 and on() sum(kube_deployment_status_replicas_available{namespace="agent-worker",deployment="agent-worker"}) == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: Jobs are waiting but no workers are running.
+            description: KEDA reports jobs on the queue but the agent-worker deployment has had no available pods for 5 minutes. Check the ScaledObject status and the KEDA operator logs.
+        - alert: CtmJobsFailing
+          expr: sum(increase(ctm_worker_jobs_total{outcome="failed"}[30m])) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: Match jobs are failing.
+            description: "{{ $value | humanize }} match jobs failed in the last 30 minutes. Failed jobs return to the queue and go to the dead-letter queue after repeated failures. Check the worker logs."
+        # Jobs that run close to the queue's 300 s visibility timeout may be
+        # handed to a second worker and processed twice
+        - alert: CtmJobsNearVisibilityTimeout
+          expr: histogram_quantile(0.95, sum by (le) (rate(ctm_worker_job_seconds_bucket[15m]))) > 240
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Match jobs are running close to the queue's visibility timeout.
+            description: The slowest 5% of jobs take over 240 s; at 300 s SQS hands the job to another worker. Consider smaller jobs or a longer visibility timeout.
