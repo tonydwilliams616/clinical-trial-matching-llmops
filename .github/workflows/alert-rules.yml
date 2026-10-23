@@ -1,0 +1,55 @@
+name: Alert Rules
+
+# Checks the Prometheus SLO and alert rules with promtool, Prometheus's own
+# checker: the rules must be valid, and every test scenario must make exactly
+# the expected alerts fire (or stay silent). No cluster needed.
+on:
+  pull_request:
+    paths:
+      - "gitops/platform/monitoring/**"
+      - "tests/monitoring/**"
+      - ".github/workflows/alert-rules.yml"
+  push:
+    branches: [main]
+    paths:
+      - "gitops/platform/monitoring/**"
+      - "tests/monitoring/**"
+      - ".github/workflows/alert-rules.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PROMETHEUS_VERSION: 3.5.0
+  PROMETHEUS_SHA256: e811827af26d822afb09a4f28314f61b618b12cff5369835a67f674d8b46f39a
+
+jobs:
+  test:
+    name: test alert rules
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install promtool (checksum verified)
+        run: |
+          curl -sSfL -o prometheus.tgz \
+            "https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz"
+          echo "${PROMETHEUS_SHA256}  prometheus.tgz" | sha256sum -c -
+          tar xzf prometheus.tgz --strip-components=1 "prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool"
+          sudo mv promtool /usr/local/bin/
+
+      # promtool reads plain rule files, so take the spec out of the
+      # PrometheusRule (yq is preinstalled on the runner)
+      - name: Extract rules from the PrometheusRule
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          yq '.spec' gitops/platform/monitoring/slo-rules.yaml > build/rules.yaml
+          cp tests/monitoring/slo-rules.test.yaml build/
+
+      - name: Check rules
+        run: promtool check rules build/rules.yaml
+
+      - name: Test rules
+        run: promtool test rules build/slo-rules.test.yaml
