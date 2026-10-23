@@ -17,6 +17,8 @@ Cost guardrails per job: at most `MAX_CANDIDATES` (default 20) patients and `MAX
 
 The worker never calls Bedrock and never logs note text. Raw notes leave it only towards the gateway, inside the cluster.
 
+Each job is one OpenTelemetry trace (`app/tracing.py`): a `match_job` span with the job and trial IDs and the result counts, a `gateway.assess` span per question (status code and verdict), and `s3.put_result`. The trace context goes to the gateway in a W3C `traceparent` header, so the gateway's masking, leftover-check and Bedrock spans appear inside the same trace. No span carries note text, criterion text or patient IDs. Spans are exported only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
+
 ## Configuration
 
 | Variable | Default | Meaning |
