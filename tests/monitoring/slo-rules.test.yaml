@@ -1,0 +1,94 @@
+# Unit tests for gitops/platform/monitoring/slo-rules.yaml, run by promtool in
+# the Alert Rules workflow. CI copies the PrometheusRule's spec to rules.yaml
+# next to this file, then feeds each scenario fake metrics and checks which
+# alerts fire. All series are made up; there is no note text anywhere.
+rule_files: [rules.yaml]
+evaluation_interval: 1m
+tests:
+  # 1. Healthy traffic, plus 422 refusals: no SLO alert, but the safety alert fires
+  - interval: 1m
+    input_series:
+      - series: 'ctm_gateway_requests_total{endpoint="/v1/assess",status="200"}'
+        values: '0+60x90'
+      - series: 'ctm_gateway_requests_total{endpoint="/v1/assess",status="422"}'
+        values: '0+10x90'
+      - series: 'ctm_gateway_refusals_total{label="EMAIL"}'
+        values: '0+10x90'
+      - series: 'ctm_gateway_request_seconds_bucket{endpoint="/v1/assess",le="5.0"}'
+        values: '0+70x90'
+      - series: 'ctm_gateway_request_seconds_count{endpoint="/v1/assess"}'
+        values: '0+70x90'
+      - series: 'up{namespace="pii-gateway",pod="pii-gateway-1"}'
+        values: '1x90'
+    alert_rule_test:
+      - {eval_time: 80m, alertname: CtmAssessErrorBudgetFastBurn, exp_alerts: []}
+      - {eval_time: 80m, alertname: CtmAssessLatencyFastBurn, exp_alerts: []}
+      - {eval_time: 80m, alertname: CtmGatewayDown, exp_alerts: []}
+      - eval_time: 80m
+        alertname: CtmSafetyNetRefusing
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: The safety check is refusing notes - masking is missing identifiers.
+              description: "150 requests refused in the last 15 minutes because an identifier survived masking. Nothing reached the model. See the refusals panel for the identifier type and the gateway logs for the shapes."
+  # 2. 30% of requests are 502 for over an hour: fast burn fires
+  - interval: 1m
+    input_series:
+      - series: 'ctm_gateway_requests_total{endpoint="/v1/assess",status="200"}'
+        values: '0+70x90'
+      - series: 'ctm_gateway_requests_total{endpoint="/v1/assess",status="502"}'
+        values: '0+30x90'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: CtmAssessErrorBudgetFastBurn
+        exp_alerts:
+          - exp_labels: {severity: critical, slo: assess-availability}
+            exp_annotations:
+              summary: Assess requests are failing fast enough to spend a month's error budget in about two days.
+              description: Over 14.4% of /v1/assess requests returned 5xx in the last hour and 5 minutes. Check Bedrock errors on the dashboard and the gateway logs (502 = model unavailable, 503 = not ready or not configured).
+  # 3. Every request slower than 5 s (le exposed as "5", the Prometheus 3 form)
+  - interval: 1m
+    input_series:
+      - series: 'ctm_gateway_request_seconds_bucket{endpoint="/v1/assess",le="5"}'
+        values: '0x90'
+      - series: 'ctm_gateway_request_seconds_count{endpoint="/v1/assess"}'
+        values: '0+50x90'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: CtmAssessLatencyFastBurn
+        exp_alerts:
+          - exp_labels: {severity: critical, slo: assess-latency}
+            exp_annotations:
+              summary: Most assess requests are taking longer than 5 seconds.
+              description: Over 72% of /v1/assess requests were slower than 5 s in the last hour and 5 minutes. Compare with Bedrock latency on the dashboard to see whether the model or the gateway is slow.
+  # 4. Jobs waiting, workers at zero; gateway not scraped at all
+  - interval: 1m
+    input_series:
+      - series: 'keda_scaler_metrics_value{scaledObject="agent-worker",namespace="agent-worker"}'
+        values: '4x20'
+      - series: 'kube_deployment_status_replicas_available{namespace="agent-worker",deployment="agent-worker"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: CtmQueueNotDraining
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: Jobs are waiting but no workers are running.
+              description: KEDA reports jobs on the queue but the agent-worker deployment has had no available pods for 5 minutes. Check the ScaledObject status and the KEDA operator logs.
+      - eval_time: 10m
+        alertname: CtmGatewayDown
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: Prometheus cannot reach any PII gateway pod.
+              description: No gateway pod has answered a scrape for 5 minutes, so no matching can happen. Check the pii-gateway Argo CD app and pod status.
+  # 5. Workers scaled to zero with an empty queue: no alert (the cost saving working)
+  - interval: 1m
+    input_series:
+      - series: 'keda_scaler_metrics_value{scaledObject="agent-worker",namespace="agent-worker"}'
+        values: '0x20'
+      - series: 'kube_deployment_status_replicas_available{namespace="agent-worker",deployment="agent-worker"}'
+        values: '0x20'
+    alert_rule_test:
+      - {eval_time: 10m, alertname: CtmQueueNotDraining, exp_alerts: []}
