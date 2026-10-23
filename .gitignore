@@ -38,5 +38,6 @@ __pycache__/
 # ---- Misc ----
 tmp/
 .DS_Store
+*.zip
 
 /tmp/
