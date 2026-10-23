@@ -1,0 +1,22 @@
+# Temporary opening in the gateway's firewall: lets the load-test pods call it
+# on 8080 for the length of the test. Created and deleted with the Job (not in
+# Git-synced manifests), so normally only the agent workers can reach the
+# gateway. Argo CD doesn't track or prune it, and `kubectl delete -k` removes it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-loadtest
+  namespace: pii-gateway
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pii-gateway
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: loadtest
+      ports:
+        - port: 8080
+          protocol: TCP
