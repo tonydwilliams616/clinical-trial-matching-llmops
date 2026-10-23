@@ -20,6 +20,13 @@ spec:
         # Platform controllers stay on the managed system nodes
         nodeSelector:
           node-role: system
+        # Operator metrics (queue depth as KEDA sees it, scaler health) on port
+        # 8080, plus a PodMonitor so Prometheus scrapes them. Numbers only.
+        prometheus:
+          operator:
+            enabled: true
+            podMonitor:
+              enabled: true
   destination:
     server: https://kubernetes.default.svc
     namespace: keda
@@ -31,3 +38,6 @@ spec:
       - CreateNamespace=true
       # KEDA's CRDs exceed the 256 KB annotation limit of client-side apply
       - ServerSideApply=true
+      # The PodMonitor kind comes from the monitoring app; don't fail the
+      # first sync if KEDA happens to sync before those CRDs exist
+      - SkipDryRunOnMissingResource=true
