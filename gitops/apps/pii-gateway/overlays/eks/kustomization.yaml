@@ -5,10 +5,11 @@ kind: Kustomization
 resources:
   - ../../base
   - podmonitor.yaml
+  - networkpolicy-tracing.yaml
 images:
   - name: pii-gateway
     newName: 359013545044.dkr.ecr.us-east-1.amazonaws.com/ctm/pii-gateway
-    newTag: 5abdd41bdaed407eebf77a1ff281ff428d2e7394
+    newTag: 9faef5682af253e5a217c0acf589928bfc7d2f8e
 patches:
   - target:
       kind: Deployment
@@ -26,3 +27,10 @@ patches:
         value:
           name: BEDROCK_MODEL_ID
           value: arn:aws:bedrock:us-east-1:359013545044:application-inference-profile/6l3qzrqrfare
+      # Send traces to Tempo (allowed by networkpolicy-tracing.yaml). Without
+      # this variable the app creates spans but exports nothing.
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://tempo.monitoring.svc:4318
