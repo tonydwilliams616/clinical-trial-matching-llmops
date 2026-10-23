@@ -1,0 +1,46 @@
+# Runs the k6 script once against the gateway Service. Applied by hand during
+# a test session, never by Argo CD (see ../README.md).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-gateway
+  namespace: loadtest
+spec:
+  backoffLimit: 0              # one run, no automatic retries (each run costs Bedrock calls)
+  ttlSecondsAfterFinished: 7200
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: k6
+      annotations:
+        karpenter.sh/do-not-disrupt: "true"
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        node-role: workload
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: k6
+          image: grafana/k6:2.3.0
+          args: ["run", "/scripts/assess.js"]
+          env:
+            - name: GATEWAY_URL
+              value: http://pii-gateway.pii-gateway
+          resources:
+            requests: { cpu: 250m, memory: 256Mi }
+            limits: { memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+      volumes:
+        - name: scripts
+          configMap:
+            name: k6-scripts
