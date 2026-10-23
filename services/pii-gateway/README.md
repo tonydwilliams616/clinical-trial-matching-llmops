@@ -16,6 +16,8 @@ Built with FastAPI and [Presidio](https://microsoft.github.io/presidio/) (spaCy 
 
 Request text is never logged. Logs are JSON with sizes, counts and timings only.
 
+Observability follows the same rule: Prometheus metrics at `GET /metrics` and OpenTelemetry traces (`app/tracing.py`: one span each for masking, the leftover check and the Bedrock call) carry counts, timings and fixed labels only. Traces are exported only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set; a caller's W3C `traceparent` header joins the gateway's spans to the caller's trace.
+
 ## Run locally
 
 ```
