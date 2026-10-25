@@ -34,3 +34,22 @@ patches:
         value:
           name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: http://tempo.monitoring.svc:4318
+      # FastAPI's built-in telemetry also reads the endpoint above and would
+      # add its own exporters: metrics and logs (Tempo answers 404) and a second
+      # trace exporter on our provider. "none" turns each of those off; our own
+      # exporter (app/tracing.py) is attached explicitly and still sends traces.
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: OTEL_TRACES_EXPORTER
+          value: none
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: OTEL_METRICS_EXPORTER
+          value: none
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: OTEL_LOGS_EXPORTER
+          value: none
