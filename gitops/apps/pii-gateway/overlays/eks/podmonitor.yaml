@@ -13,3 +13,10 @@ spec:
     - port: http
       path: /metrics
       interval: 15s
+      # The gateway's own metrics carry an "endpoint" label (/v1/assess,
+      # /v1/mask...). Prometheus also adds a target label called "endpoint"
+      # (the port name, "http") and, by default, renames the app's label to
+      # exported_endpoint - which left the dashboard and the SLO rules matching
+      # nothing (found in the EKS proof session). honorLabels keeps the app's
+      # label; the target's port name isn't needed.
+      honorLabels: true
