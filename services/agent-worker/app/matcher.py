@@ -14,6 +14,7 @@ eligibility decision. Candidate and criterion caps keep each job's model
 spend small and predictable.
 """
 
+import contextvars
 import datetime
 from concurrent.futures import ThreadPoolExecutor
 
@@ -45,8 +46,16 @@ def run_job(job: dict, data, gateway, *, reference: datetime.date,
 
     # 2. Free-text criteria through the gateway, a few calls at a time
     pairs = [(pid, q) for pid, _ in candidates for q in questions]
+    # Pool threads start with an empty context, which would drop the job's
+    # trace: each gateway call became its own trace on EKS. Run every call in a
+    # copy of this thread's context so its span stays inside the job's trace.
+    job_context = contextvars.copy_context()
+
+    def ask(pair):
+        return gateway.assess(data.note(pair[0]), pair[1])
+
     with ThreadPoolExecutor(max_workers=parallel) as pool:
-        verdicts = list(pool.map(lambda pair: gateway.assess(data.note(pair[0]), pair[1]), pairs))
+        verdicts = list(pool.map(lambda pair: job_context.copy().run(ask, pair), pairs))
     by_patient: dict[str, list] = {pid: [] for pid, _ in candidates}
     for (pid, question), verdict in zip(pairs, verdicts):
         by_patient[pid].append({"criterion": question, **verdict})
