@@ -143,3 +143,25 @@ def test_fake_gateway_jobs_still_work_without_a_provider_configured():
     gateway = FakeGateway()
     assert poll(FakeSQS([JOB]), FakeS3(), gateway=gateway) == 1
     assert gateway.calls
+
+
+class TraceRecordingGateway(FakeGateway):
+    """Records which trace each gateway call runs in (calls come from pool threads)."""
+
+    def __init__(self):
+        super().__init__()
+        self.trace_ids = []
+
+    def assess(self, note, criterion):
+        self.trace_ids.append(trace.get_current_span().get_span_context().trace_id)
+        return super().assess(note, criterion)
+
+
+def test_gateway_calls_from_the_thread_pool_stay_in_the_job_trace(spans):
+    # Regression: on EKS every gateway.assess was its own trace, because
+    # ThreadPoolExecutor threads don't inherit the job's context
+    gateway = TraceRecordingGateway()
+    assert poll(FakeSQS([JOB]), FakeS3(), gateway=gateway) == 1
+    job = by_name(spans)["match_job"]
+    assert gateway.trace_ids, "no gateway calls were made"
+    assert set(gateway.trace_ids) == {job.context.trace_id}
