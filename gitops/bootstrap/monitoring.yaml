@@ -1,6 +1,6 @@
 # Prometheus, Grafana and Alertmanager (kube-prometheus-stack), synced from Git
 # on every spin-up. Prometheus collects the gateway's and workers' metrics;
-# Grafana draws them; Alertmanager will deliver alerts (SLO PR).
+# Grafana draws them; Alertmanager emails the Ctm* alerts via SNS.
 #
 # Ephemeral by design: no persistent volumes (the cluster is destroyed nightly),
 # 12 hours of data on node-local disk (emptyDir). Reached only via port-forward.
@@ -61,6 +61,39 @@ spec:
               limits: { memory: 1Gi }
 
         alertmanager:
+          # Must match the Pod Identity association in 20-eks
+          # (alertmanager-identity.tf), which grants sns:Publish on the topic
+          serviceAccount:
+            name: monitoring-kube-prometheus-alertmanager
+          # The project's Ctm* alerts go by email through the ops-alerts SNS
+          # topic (00-account), firing and resolved; everything else (Watchdog,
+          # the chart's built-in rules) stays in the UI only, so the inbox gets
+          # alerts that mean something. Credentials come from Pod Identity.
+          config:
+            route:
+              receiver: "null"
+              group_by: [alertname, severity]
+              group_wait: 30s
+              group_interval: 5m
+              repeat_interval: 4h
+              routes:
+                - receiver: ops-email
+                  matchers:
+                    - alertname =~ "Ctm.*"
+            receivers:
+              - name: "null"
+              - name: ops-email
+                sns_configs:
+                  - topic_arn: arn:aws:sns:us-east-1:359013545044:ctm-ops-alerts
+                    sigv4:
+                      region: us-east-1
+                    send_resolved: true
+                    subject: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }})'
+                    message: |-
+                      {{ range .Alerts }}{{ .Annotations.summary }}
+                      {{ .Annotations.description }}
+                      Status: {{ .Status }}, started {{ .StartsAt.Format "2006-01-02 15:04:05 MST" }}
+                      {{ end }}
           alertmanagerSpec:
             nodeSelector: { node-role: workload }
             podMetadata:
