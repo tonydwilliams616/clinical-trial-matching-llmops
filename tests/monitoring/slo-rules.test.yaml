@@ -117,3 +117,41 @@ tests:
         values: '_ _ 2x10'
     alert_rule_test:
       - {eval_time: 4m, alertname: CtmJobsFailing, exp_alerts: []}
+  # 8. KEDA paused with jobs waiting: its queue metric disappears (as on EKS,
+  #    25 Oct), so CtmQueueNotDraining can't fire - CtmScalingPaused does.
+  - interval: 1m
+    input_series:
+      - series: 'keda_scaled_object_paused{scaledObject="agent-worker",namespace="agent-worker"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: CtmScalingPaused
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: Worker autoscaling is paused.
+              description: The agent-worker ScaledObject has been paused for 10 minutes, so queued jobs are not processed and CtmQueueNotDraining cannot see the queue. If this was not intended, remove the autoscaling.keda.sh/paused-replicas annotation (chaos/experiment.sh keda-resume).
+      - {eval_time: 12m, alertname: CtmQueueMetricsMissing, exp_alerts: []}
+  # 9. KEDA itself gone: no queue metric and no paused flag either.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="unrelated"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: CtmQueueMetricsMissing
+        exp_alerts:
+          - exp_labels: {severity: warning, scaledObject: agent-worker}
+            exp_annotations:
+              summary: Queue depth is not being reported.
+              description: KEDA has published no queue depth for agent-worker for 10 minutes and the ScaledObject is not paused, so scaling and CtmQueueNotDraining are both blind. Check the KEDA operator pods, its PodMonitor target and the ScaledObject status.
+  # 10. Normal idle: queue metric at 0, not paused - both stay silent.
+  - interval: 1m
+    input_series:
+      - series: 'keda_scaler_metrics_value{scaledObject="agent-worker",namespace="agent-worker"}'
+        values: '0x20'
+      - series: 'keda_scaled_object_paused{scaledObject="agent-worker",namespace="agent-worker"}'
+        values: '0x20'
+    alert_rule_test:
+      - {eval_time: 12m, alertname: CtmScalingPaused, exp_alerts: []}
+      - {eval_time: 12m, alertname: CtmQueueMetricsMissing, exp_alerts: []}
