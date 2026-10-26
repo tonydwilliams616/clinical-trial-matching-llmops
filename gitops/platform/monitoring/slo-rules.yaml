@@ -125,6 +125,27 @@ spec:
           annotations:
             summary: Jobs are waiting but no workers are running.
             description: KEDA reports jobs on the queue but the agent-worker deployment has had no available pods for 5 minutes. Check the ScaledObject status and the KEDA operator logs.
+        # CtmQueueNotDraining reads KEDA's queue metric, which KEDA stops
+        # publishing when the ScaledObject is paused - so a pause made that
+        # alert blind on EKS (25 Oct). These two cover the gap: a pause left
+        # in place, and the queue metric missing for any other reason (KEDA
+        # down, its scrape broken).
+        - alert: CtmScalingPaused
+          expr: max(keda_scaled_object_paused{scaledObject="agent-worker"}) == 1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Worker autoscaling is paused.
+            description: The agent-worker ScaledObject has been paused for 10 minutes, so queued jobs are not processed and CtmQueueNotDraining cannot see the queue. If this was not intended, remove the autoscaling.keda.sh/paused-replicas annotation (chaos/experiment.sh keda-resume).
+        - alert: CtmQueueMetricsMissing
+          expr: absent(keda_scaler_metrics_value{scaledObject="agent-worker"}) unless on() max(keda_scaled_object_paused{scaledObject="agent-worker"}) == 1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Queue depth is not being reported.
+            description: KEDA has published no queue depth for agent-worker for 10 minutes and the ScaledObject is not paused, so scaling and CtmQueueNotDraining are both blind. Check the KEDA operator pods, its PodMonitor target and the ScaledObject status.
         - alert: CtmJobsFailing
           expr: sum(increase(ctm_worker_jobs_total{outcome="failed"}[30m])) > 0
           labels:
