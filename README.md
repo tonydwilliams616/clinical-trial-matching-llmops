@@ -4,6 +4,61 @@
 
 > Portfolio project. All four phases are built and were proven on a live EKS cluster on 25 Oct 2026 (results below). The focus is the platform: infrastructure as code, GitOps delivery, keyless workload identity, network-enforced data protection, autoscaling and observability.
 
+## Architecture at a glance
+
+```mermaid
+flowchart LR
+  subgraph delivery["Delivery"]
+    gh["GitHub<br/>PRs + CI checks"]
+    gha["GitHub Actions<br/>OIDC, no stored AWS keys"]
+  end
+
+  subgraph aws["AWS account, us-east-1"]
+    ecr["ECR<br/>images tagged by commit SHA"]
+    sqs["SQS match jobs<br/>+ dead-letter queue"]
+    raw["S3 raw, KMS<br/>synthetic patients + notes"]
+    deid["S3 de-identified<br/>trials + shortlists"]
+    bedrock["Amazon Bedrock<br/>Claude Haiku 4.5 profile"]
+
+    subgraph vpc["VPC, private subnets"]
+      vpce["Private interface endpoints<br/>incl. Bedrock, S3, SQS"]
+
+      subgraph eks["EKS cluster"]
+        argo["Argo CD"]
+        keda["KEDA"]
+        worker["agent-worker<br/>hard criteria in code"]
+        gw["pii-gateway<br/>mask, then leftover check"]
+
+        subgraph obs["monitoring"]
+          prom["Prometheus<br/>+ Alertmanager"]
+          tempo["Tempo"]
+          graf["Grafana"]
+        end
+      end
+    end
+  end
+
+  gh --> gha
+  gha -- "terraform apply" --> aws
+  gha -- "build + push" --> ecr
+  gh -. "Argo CD pulls gitops/" .-> argo
+  sqs -- "queue depth" --> keda
+  keda -- "scales 0 to 3" --> worker
+  sqs -- "job" --> worker
+  raw -- "notes" --> worker
+  worker -- "raw note, in-cluster only" --> gw
+  gw -- "masked text only" --> vpce
+  vpce --> bedrock
+  worker -- "shortlist for human review" --> deid
+  worker & gw -. "metrics" .-> prom
+  worker & gw -. "traces" .-> tempo
+  prom & tempo --> graf
+```
+
+- **Only the gateway can reach the model.** Its Pod Identity role is the only one allowed `bedrock:InvokeModel`, on the project's own inference profile; default-deny NetworkPolicies let the gateway and workers make HTTPS calls only to addresses inside the VPC, so Bedrock is reached through a private endpoint, never the internet.
+- **Raw notes never leave the cluster unmasked.** The worker sends a note to the gateway inside the cluster; the gateway masks it, checks independently that no identifier survived, and only then calls Bedrock. A failed check means nothing is sent.
+- **Nothing runs when there's nothing to do.** KEDA scales the workers from zero on queue depth; Karpenter adds nodes only when pods need them; the cluster itself is created and destroyed per session from Terraform.
+
 ## Ground rules
 
 - **Synthetic data only.** Patients come from Synthea, trial criteria from ClinicalTrials.gov, and clinical notes are generated with planted fake identifiers. No real patient data is ever used.
@@ -12,7 +67,7 @@
 - **Rules in code, judgement in the LLM.** Age, sex and confirmed diagnoses are checked in code; the LLM handles free-text criteria.
 - **Honest claims.** Designed with HIPAA-aligned controls. This project is not HIPAA-compliant and makes no such claim.
 
-## Architecture
+## Layers
 
 | Layer | What runs there |
 | --- | --- |
