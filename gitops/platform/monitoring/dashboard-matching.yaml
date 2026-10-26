@@ -21,7 +21,7 @@ data:
       ],
       "timezone": "browser",
       "schemaVersion": 39,
-      "version": 1,
+      "version": 2,
       "editable": true,
       "time": {
         "from": "now-1h",
@@ -80,15 +80,22 @@ data:
             }
           ],
           "fieldConfig": {
-            "defaults": {},
+            "defaults": {
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "blue"
+              }
+            },
             "overrides": []
           },
-          "options": {}
+          "options": {
+            "colorMode": "value"
+          }
         },
         {
           "type": "stat",
           "title": "Answered by the model",
-          "description": "Share of assess requests that got a model answer (refusals and errors count against it).",
+          "description": "Share of assess requests that got a model answer (refusals and errors count against it). Green at 99% or more, yellow from 95%, red below.",
           "id": 3,
           "datasource": {
             "type": "prometheus",
@@ -113,7 +120,27 @@ data:
           ],
           "fieldConfig": {
             "defaults": {
-              "unit": "percentunit"
+              "unit": "percentunit",
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.95
+                  },
+                  {
+                    "color": "green",
+                    "value": 0.99
+                  }
+                ]
+              }
             },
             "overrides": []
           },
@@ -146,10 +173,17 @@ data:
             }
           ],
           "fieldConfig": {
-            "defaults": {},
+            "defaults": {
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "blue"
+              }
+            },
             "overrides": []
           },
-          "options": {}
+          "options": {
+            "colorMode": "value"
+          }
         },
         {
           "type": "stat",
@@ -178,10 +212,17 @@ data:
             }
           ],
           "fieldConfig": {
-            "defaults": {},
+            "defaults": {
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "blue"
+              }
+            },
             "overrides": []
           },
-          "options": {}
+          "options": {
+            "colorMode": "value"
+          }
         },
         {
           "type": "row",
@@ -389,7 +430,7 @@ data:
         },
         {
           "type": "row",
-          "title": "Matching results (selected time range)",
+          "title": "Matching results (estimated - exact counts are in each job's trace and result file)",
           "id": 12,
           "collapsed": false,
           "gridPos": {
@@ -402,8 +443,8 @@ data:
         },
         {
           "type": "bargauge",
-          "title": "Model verdicts",
-          "description": "",
+          "title": "Model verdicts (estimated)",
+          "description": "Estimated by Prometheus from 15-second samples (increase over the time range), so not an exact tally. Exact counts per job are in its trace (match_job attributes) and its result file.",
           "id": 13,
           "datasource": {
             "type": "prometheus",
@@ -427,15 +468,21 @@ data:
             }
           ],
           "fieldConfig": {
-            "defaults": {},
+            "defaults": {
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "blue"
+              },
+              "decimals": 0
+            },
             "overrides": []
           },
           "options": {}
         },
         {
           "type": "bargauge",
-          "title": "Candidates by status",
-          "description": "Three-way shortlist. Worker series exist only while workers run.",
+          "title": "Candidates by status (estimated)",
+          "description": "Three-way shortlist. Worker series exist only while workers run. Estimated by Prometheus from 15-second samples (increase over the time range), so not an exact tally. Exact counts per job are in its trace (match_job attributes) and its result file.",
           "id": 14,
           "datasource": {
             "type": "prometheus",
@@ -459,15 +506,21 @@ data:
             }
           ],
           "fieldConfig": {
-            "defaults": {},
+            "defaults": {
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "blue"
+              },
+              "decimals": 0
+            },
             "overrides": []
           },
           "options": {}
         },
         {
           "type": "bargauge",
-          "title": "Jobs by outcome",
-          "description": "",
+          "title": "Jobs by outcome (estimated)",
+          "description": "Estimated by Prometheus from 15-second samples (increase over the time range), so not an exact tally. Exact counts per job are in its trace (match_job attributes) and its result file.",
           "id": 15,
           "datasource": {
             "type": "prometheus",
@@ -491,7 +544,13 @@ data:
             }
           ],
           "fieldConfig": {
-            "defaults": {},
+            "defaults": {
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "blue"
+              },
+              "decimals": 0
+            },
             "overrides": []
           },
           "options": {}
