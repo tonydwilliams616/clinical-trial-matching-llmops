@@ -9,7 +9,7 @@
 ### How a match job flows
 
 ```mermaid
-flowchart LR
+flowchart TB
   sqs["SQS<br/>match jobs"] -- "queue depth" --> keda["KEDA"]
   keda -- "scales 0 to 3" --> worker
   sqs -- "job" --> worker
@@ -29,7 +29,7 @@ flowchart LR
 ### How it's delivered and observed
 
 ```mermaid
-flowchart LR
+flowchart TB
   gh["GitHub<br/>PRs + CI checks"] --> gha["GitHub Actions<br/>OIDC, no stored keys"]
   gha -- "terraform apply" --> infra["AWS: network, EKS,<br/>queue, buckets, Bedrock"]
   gha -- "build + push" --> ecr["ECR<br/>images by commit SHA"]
