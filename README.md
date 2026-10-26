@@ -2,7 +2,7 @@
 
 **A production-style LLMOps platform on Amazon EKS that shortlists synthetic patients for clinical trials – routing every piece of clinical text through an in-cluster PII-masking gateway before it reaches Amazon Bedrock.**
 
-> Portfolio project. All four phases are built and were proven on a live EKS cluster on 25 Oct 2026 (results below). The focus is the platform: infrastructure as code, GitOps delivery, keyless workload identity, network-enforced data protection, autoscaling and observability.
+> Portfolio project. All four phases are built and were proven on a live EKS cluster on 25 Oct 2026; the fixes for what that session found were re-proven on EKS on 26 Oct (results below). The focus is the platform: infrastructure as code, GitOps delivery, keyless workload identity, network-enforced data protection, autoscaling and observability.
 
 ## Architecture at a glance
 
@@ -38,6 +38,7 @@ flowchart TB
   apps -- "metrics" --> prom["Prometheus<br/>+ Alertmanager"]
   apps -- "traces" --> tempo["Tempo"]
   prom --> graf["Grafana"]
+  prom -- "Ctm alerts" --> sns["SNS<br/>email"]
   tempo --> graf
 ```
 
@@ -61,7 +62,7 @@ flowchart TB
 | **Delivery** | GitHub Actions with OIDC (no stored AWS keys): blocking Checkov, plan on PR, approval-gated apply, images tagged by commit SHA; Argo CD for everything in the cluster |
 | **Security** | PII gateway (Presidio) as the only route to Bedrock; default-deny NetworkPolicies; EKS Pod Identity; External Secrets; per-dataset KMS and bucket policies |
 | **Workloads** | Agent workers consuming SQS, scaled by KEDA (to zero when idle) on Karpenter nodes; gateway HPA and PDB |
-| **Observability** | Prometheus + Grafana with the dashboard as code; SLOs with multi-window burn-rate alerts (rules unit-tested by promtool in CI); OpenTelemetry traces to Tempo, one trace per match job across both services. Metrics and spans carry counts and timings only, never note text |
+| **Observability** | Prometheus + Grafana with the dashboard as code; SLOs with multi-window burn-rate alerts (rules unit-tested by promtool in CI); Alertmanager emails the project's alerts (firing and resolved) through SNS, using a Pod Identity role allowed only `sns:Publish` on that topic. OpenTelemetry traces to Tempo, one trace per match job across both services. Metrics and spans carry counts and timings only, never note text |
 
 ## Phases
 
@@ -116,8 +117,8 @@ Six jobs (600 model questions) queued at once: KEDA scaled the workers 0 → 3 w
 | One gateway pod killed mid-job | No failed requests | None, correctly |
 | Busy worker stopped politely (SIGTERM) | Finished its job, then exited | None, correctly |
 | Busy worker killed with no warning | Job reappeared after the 5-minute visibility timeout and completed once | None, correctly |
-| Every gateway pod killed | Both in-flight jobs failed, were retried and completed | `CtmJobsFailing` stayed silent (finding below) |
-| KEDA paused with jobs waiting | Jobs waited, then drained on resume | `CtmQueueNotDraining` stayed silent (finding below) |
+| Every gateway pod killed | Both in-flight jobs failed, were retried and completed | `CtmJobsFailing` stayed silent (finding below; fires since the 26 Oct fix) |
+| KEDA paused with jobs waiting | Jobs waited, then drained on resume | `CtmQueueNotDraining` stayed silent (finding below; `CtmScalingPaused` added and proven 26 Oct) |
 | Gateway down for 6 minutes | Back to 2 pods; jobs unaffected (workers paused) | `CtmGatewayDown` pending, firing, resolved |
 
 No job was lost or processed twice in any experiment.
@@ -133,9 +134,27 @@ Finding these was the point of the day. Each has a cause and a fix:
 | A job showed up as 100 separate traces | Worker thread pool threads don't inherit the job's trace context | Fixed and verified the same day |
 | Gateway logged `Failed to export metrics` (404) every minute, and likely exported spans twice | FastAPI's built-in telemetry reads the OTLP endpoint and adds its own exporters | Fixed (its exporters set to `none`) and verified |
 | Dashboard request and latency panels, and both SLO rules, matched nothing | The app's `endpoint` label clashed with the scrape target's `endpoint` label and was renamed | Fixed (`honorLabels`) and verified |
-| `CtmJobsFailing` silent during a real outage | Labelled counters are created at their first increment, so Prometheus never sees them rise from 0 | Open: create counters at zero on start-up; add a promtool case for it |
-| `CtmQueueNotDraining` silent while KEDA was paused | KEDA stops publishing queue depth when paused | Open: alert on a paused ScaledObject and on the metric going absent |
-| Experiment script raced the scale-from-zero delay | Fixed sleep instead of waiting for a busy worker | Open: wait for a running worker |
+| `CtmJobsFailing` silent during a real outage | Labelled counters are created at their first increment, so Prometheus never sees them rise from 0 | Fixed (counters created at zero, promtool case) and verified on EKS 26 Oct |
+| `CtmQueueNotDraining` silent while KEDA was paused | KEDA stops publishing queue depth when paused | Fixed (`CtmScalingPaused`, `CtmQueueMetricsMissing`) and verified on EKS 26 Oct |
+| Experiment script raced the scale-from-zero delay | Fixed sleep instead of waiting for a busy worker | Fixed (waits for a busy worker) and verified on EKS 26 Oct |
+
+### Re-check on EKS (26 Oct 2026)
+
+A short session to prove the three open findings fixed, and the new email alerting, on a live cluster:
+
+| Test | Result |
+| --- | --- |
+| Gateway scaled to 0 for 75 s while 2 jobs ran | Both jobs failed (connection refused); the fresh worker's failed counter went 0 → 2 and `CtmJobsFailing` fired. Both jobs were retried by SQS and completed. `CtmGatewayDown` stayed silent (under its 5 minutes) |
+| Every gateway pod killed (`gateway-all`) | Replacement pods ready in 4 s and the old ones shut down cleanly: no job failed, so no alert, correctly |
+| Busy worker killed with no warning | Hit first time; the job reappeared after the visibility timeout and completed about 6 minutes after the kill |
+| KEDA paused with jobs waiting | `CtmScalingPaused` pending at once, firing at 10 minutes; `CtmQueueMetricsMissing` stayed silent, as designed. The waiting job completed on resume |
+| Email delivery | Four emails: each alert's firing email within about 20 s, and a resolved email once it cleared |
+
+Every job completed and every result file was full size. Two wording fixes came out of it: the alert text now rounds Prometheus's estimated counts (the email below reported 3.814 failures for 2), and resolved emails say plainly that the alert cleared.
+
+![CtmScalingPaused firing after 10 minutes](docs/images/alert-scaling-paused.png)
+
+![Email from Alertmanager through SNS: CtmJobsFailing firing](docs/images/alert-email.png)
 
 ## Datasets (built in phase 1)
 
