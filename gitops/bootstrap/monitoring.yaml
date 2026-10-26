@@ -89,11 +89,15 @@ spec:
                       region: us-east-1
                     send_resolved: true
                     subject: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }})'
+                    # A resolved alert keeps its firing text, so say plainly it cleared
                     message: |-
-                      {{ range .Alerts }}{{ .Annotations.summary }}
+                      {{ range .Alerts }}{{ if eq .Status "resolved" }}Resolved: {{ .Labels.alertname }} has cleared. No action needed.
+                      It had fired with: {{ .Annotations.summary }}
+                      Started {{ .StartsAt.Format "2006-01-02 15:04:05 MST" }}, cleared {{ .EndsAt.Format "2006-01-02 15:04:05 MST" }}
+                      {{ else }}{{ .Annotations.summary }}
                       {{ .Annotations.description }}
-                      Status: {{ .Status }}, started {{ .StartsAt.Format "2006-01-02 15:04:05 MST" }}
-                      {{ end }}
+                      Status: firing, started {{ .StartsAt.Format "2006-01-02 15:04:05 MST" }}
+                      {{ end }}{{ end }}
           alertmanagerSpec:
             nodeSelector: { node-role: workload }
             podMetadata:

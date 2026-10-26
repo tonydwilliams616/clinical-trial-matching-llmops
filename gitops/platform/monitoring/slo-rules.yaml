@@ -98,7 +98,7 @@ spec:
             severity: warning
           annotations:
             summary: The safety check is refusing notes - masking is missing identifiers.
-            description: "{{ $value | humanize }} requests refused in the last 15 minutes because an identifier survived masking. Nothing reached the model. See the refusals panel for the identifier type and the gateway logs for the shapes."
+            description: "About {{ $value | printf \"%.0f\" }} requests refused in the last 15 minutes (a Prometheus estimate) because an identifier survived masking. Nothing reached the model. See the refusals panel for the identifier type and the gateway logs for the shapes."
         - alert: CtmBedrockErrors
           expr: sum(rate(ctm_gateway_bedrock_errors_total[10m])) > 0
           for: 10m
@@ -146,13 +146,15 @@ spec:
           annotations:
             summary: Queue depth is not being reported.
             description: KEDA has published no queue depth for agent-worker for 10 minutes and the ScaledObject is not paused, so scaling and CtmQueueNotDraining are both blind. Check the KEDA operator pods, its PodMonitor target and the ScaledObject status.
+        # increase() extrapolates to the window edges, so it can report 3.8 for
+        # 2 failures (EKS, 26 Oct): the count is rounded and called an estimate
         - alert: CtmJobsFailing
           expr: sum(increase(ctm_worker_jobs_total{outcome="failed"}[30m])) > 0
           labels:
             severity: warning
           annotations:
             summary: Match jobs are failing.
-            description: "{{ $value | humanize }} match jobs failed in the last 30 minutes. Failed jobs return to the queue and go to the dead-letter queue after repeated failures. Check the worker logs."
+            description: "About {{ $value | printf \"%.0f\" }} match jobs failed in the last 30 minutes (a Prometheus estimate). Failed jobs return to the queue and go to the dead-letter queue after repeated failures. Check the worker logs."
         # Jobs that run close to the queue's 300 s visibility timeout may be
         # handed to a second worker and processed twice
         - alert: CtmJobsNearVisibilityTimeout

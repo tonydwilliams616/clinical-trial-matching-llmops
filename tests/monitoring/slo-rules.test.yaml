@@ -30,7 +30,7 @@ tests:
           - exp_labels: {severity: warning}
             exp_annotations:
               summary: The safety check is refusing notes - masking is missing identifiers.
-              description: "150 requests refused in the last 15 minutes because an identifier survived masking. Nothing reached the model. See the refusals panel for the identifier type and the gateway logs for the shapes."
+              description: "About 150 requests refused in the last 15 minutes (a Prometheus estimate) because an identifier survived masking. Nothing reached the model. See the refusals panel for the identifier type and the gateway logs for the shapes."
   # 2. 30% of requests are 502 for over an hour: fast burn fires
   - interval: 1m
     input_series:
@@ -107,7 +107,7 @@ tests:
           - exp_labels: {severity: warning}
             exp_annotations:
               summary: Match jobs are failing.
-              description: "2 match jobs failed in the last 30 minutes. Failed jobs return to the queue and go to the dead-letter queue after repeated failures. Check the worker logs."
+              description: "About 2 match jobs failed in the last 30 minutes (a Prometheus estimate). Failed jobs return to the queue and go to the dead-letter queue after repeated failures. Check the worker logs."
   # 7. The blind spot that needed that fix (found on EKS, 25 Oct): a counter
   #    first seen already at 2 has no visible increase, so the alert is silent.
   #    Kept as a test so the reason for creating counters at zero stays visible.
