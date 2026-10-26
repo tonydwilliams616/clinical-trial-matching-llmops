@@ -92,3 +92,28 @@ tests:
         values: '0x20'
     alert_rule_test:
       - {eval_time: 10m, alertname: CtmQueueNotDraining, exp_alerts: []}
+
+  # 6. A worker fails twice between two scrapes. With its counters created at
+  #    zero on start-up (services/agent-worker/app/metrics.py), Prometheus sees
+  #    0 -> 2 and CtmJobsFailing fires.
+  - interval: 1m
+    input_series:
+      - series: 'ctm_worker_jobs_total{outcome="failed",pod="agent-worker-a"}'
+        values: '0 0 2x10'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: CtmJobsFailing
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: Match jobs are failing.
+              description: "2 match jobs failed in the last 30 minutes. Failed jobs return to the queue and go to the dead-letter queue after repeated failures. Check the worker logs."
+  # 7. The blind spot that needed that fix (found on EKS, 25 Oct): a counter
+  #    first seen already at 2 has no visible increase, so the alert is silent.
+  #    Kept as a test so the reason for creating counters at zero stays visible.
+  - interval: 1m
+    input_series:
+      - series: 'ctm_worker_jobs_total{outcome="failed",pod="agent-worker-b"}'
+        values: '_ _ 2x10'
+    alert_rule_test:
+      - {eval_time: 4m, alertname: CtmJobsFailing, exp_alerts: []}
