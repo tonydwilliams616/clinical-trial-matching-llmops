@@ -9,7 +9,7 @@ resources:
 images:
   - name: pii-gateway
     newName: 359013545044.dkr.ecr.us-east-1.amazonaws.com/ctm/pii-gateway
-    newTag: 9faef5682af253e5a217c0acf589928bfc7d2f8e
+    newTag: d204ba86872e536b30ab7c36e1b31c04d243b0b2
 patches:
   - target:
       kind: Deployment
