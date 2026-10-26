@@ -1,5 +1,8 @@
 """Gateway metrics: the right numbers move, labels stay bounded, no text leaks."""
 
+import subprocess
+import sys
+
 import pytest
 from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
@@ -74,3 +77,24 @@ def test_metrics_never_contain_request_text(client, fake):
     text = client.get("/metrics").text
     for value_text in ["John", "Smith", "4821937", "555-0147", "hypertension"]:
         assert value_text not in text, value_text
+
+
+def test_alerted_series_exist_at_zero_on_start_up():
+    # A fresh process: in this one, other tests have already counted requests.
+    script = (
+        "from prometheus_client import REGISTRY\n"
+        "from app import metrics\n"
+        "from app.safety import RESIDUAL_PATTERNS\n"
+        "checks = [('ctm_gateway_requests_total', {'endpoint': '/v1/assess', 'status': s}) for s in metrics.ASSESS_STATUSES]\n"
+        "checks += [('ctm_gateway_request_seconds_count', {'endpoint': '/v1/assess'})]\n"
+        "checks += [('ctm_gateway_refusals_total', {'label': l}) for l in RESIDUAL_PATTERNS]\n"
+        "checks += [('ctm_gateway_verdicts_total', {'verdict': v}) for v in metrics.VERDICT_VALUES]\n"
+        "checks += [('ctm_gateway_tokens_total', {'direction': d}) for d in metrics.TOKEN_DIRECTIONS]\n"
+        "for name, labels in checks:\n"
+        "    print(name, REGISTRY.get_sample_value(name, labels))\n"
+    )
+    out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True).stdout
+    lines = out.strip().splitlines()
+    assert len(lines) == 4 + 1 + 4 + 3 + 2
+    for line in lines:
+        assert line.endswith(" 0.0"), line

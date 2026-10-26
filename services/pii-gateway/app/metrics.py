@@ -35,6 +35,33 @@ TOKENS = Counter("ctm_gateway_tokens_total", "Bedrock tokens", ["direction"])
 VERDICTS = Counter("ctm_gateway_verdicts_total", "Assess verdicts", ["verdict"])
 
 
+# Label values the alerts and SLO rules depend on, created at zero when the
+# gateway starts. A labelled series otherwise appears only at its first
+# increment, already above 0, and Prometheus's increase() can't see that first
+# rise: on EKS (25 Oct) the worker's equivalent left an alert silent through a
+# real outage. Refusal labels come from the leftover check itself.
+ASSESS_STATUSES = ("200", "422", "502", "503")
+VERDICT_VALUES = ("likely_meets", "likely_fails", "unclear")
+TOKEN_DIRECTIONS = ("input", "output")
+
+
+def _create_at_zero() -> None:
+    from .safety import RESIDUAL_PATTERNS
+
+    for status in ASSESS_STATUSES:
+        REQUESTS.labels(endpoint="/v1/assess", status=status)
+    REQUEST_SECONDS.labels(endpoint="/v1/assess")
+    for label in RESIDUAL_PATTERNS:
+        REFUSALS.labels(label=label)
+    for verdict in VERDICT_VALUES:
+        VERDICTS.labels(verdict=verdict)
+    for direction in TOKEN_DIRECTIONS:
+        TOKENS.labels(direction=direction)
+
+
+_create_at_zero()
+
+
 def endpoint_label(path: str) -> str:
     """Known paths as themselves; anything else as "other" (keeps series bounded)."""
     return path if path in KNOWN_ENDPOINTS else "other"
