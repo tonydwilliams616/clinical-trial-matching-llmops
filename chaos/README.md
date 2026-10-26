@@ -21,9 +21,12 @@ which has a matching `keda-resume`.
 | `keda-pause` / `keda-resume` | Scaling held at zero | Jobs pile up; drain once resumed | `CtmQueueNotDraining` (critical) |
 | `tempo-pod` | The trace store | Matching, latency and results unchanged; gap in traces | None |
 
-Suggested order, with jobs flowing (`loadtest/queue-burst.sh 2` before each
-worker or gateway experiment): `tempo-pod`, `gateway-pod`, `worker-graceful`,
-`worker-abrupt`, `gateway-all`, `keda-pause` then `keda-resume`.
+Suggested order: `tempo-pod`, `gateway-pod`, `worker-graceful`,
+`worker-abrupt`, `gateway-all`, `keda-pause` then `keda-resume`. Run
+`loadtest/queue-burst.sh 2` before the Tempo and gateway experiments. The two
+worker experiments queue their own job, wait for a worker that is running (up
+to 120 s, allowing for KEDA's scale-from-zero delay) and strike 8 s into the
+job (`BUSY_DELAY` to change it), so there's no timing to get right by hand.
 
 ## Recording results
 
