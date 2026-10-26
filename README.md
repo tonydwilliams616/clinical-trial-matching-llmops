@@ -6,53 +6,39 @@
 
 ## Architecture at a glance
 
+### How a match job flows
+
 ```mermaid
-flowchart LR
-  subgraph delivery["Delivery"]
-    gh["GitHub<br/>PRs + CI checks"]
-    gha["GitHub Actions<br/>OIDC, no stored AWS keys"]
-  end
-
-  subgraph aws["AWS account, us-east-1"]
-    ecr["ECR<br/>images tagged by commit SHA"]
-    sqs["SQS match jobs<br/>+ dead-letter queue"]
-    raw["S3 raw, KMS<br/>synthetic patients + notes"]
-    deid["S3 de-identified<br/>trials + shortlists"]
-    bedrock["Amazon Bedrock<br/>Claude Haiku 4.5 profile"]
-
-    subgraph vpc["VPC, private subnets"]
-      vpce["Private interface endpoints<br/>incl. Bedrock, S3, SQS"]
-
-      subgraph eks["EKS cluster"]
-        argo["Argo CD"]
-        keda["KEDA"]
-        worker["agent-worker<br/>hard criteria in code"]
-        gw["pii-gateway<br/>mask, then leftover check"]
-
-        subgraph obs["monitoring"]
-          prom["Prometheus<br/>+ Alertmanager"]
-          tempo["Tempo"]
-          graf["Grafana"]
-        end
-      end
-    end
-  end
-
-  gh --> gha
-  gha -- "terraform apply" --> aws
-  gha -- "build + push" --> ecr
-  gh -. "Argo CD pulls gitops/" .-> argo
-  sqs -- "queue depth" --> keda
+flowchart TB
+  sqs["SQS<br/>match jobs"] -- "queue depth" --> keda["KEDA"]
   keda -- "scales 0 to 3" --> worker
   sqs -- "job" --> worker
-  raw -- "notes" --> worker
-  worker -- "raw note, in-cluster only" --> gw
-  gw -- "masked text only" --> vpce
-  vpce --> bedrock
-  worker -- "shortlist for human review" --> deid
-  worker & gw -. "metrics" .-> prom
-  worker & gw -. "traces" .-> tempo
-  prom & tempo --> graf
+  raw["S3 raw, KMS<br/>synthetic notes"] -- "notes" --> worker
+
+  subgraph eks["EKS cluster, private subnets"]
+    keda
+    worker["agent-worker<br/>hard criteria in code"]
+    gw["pii-gateway<br/>mask + leftover check"]
+  end
+
+  worker -- "raw note,<br/>in-cluster only" --> gw
+  gw -- "masked text only,<br/>private endpoint" --> bedrock["Amazon Bedrock<br/>Claude Haiku 4.5"]
+  worker -- "shortlist for<br/>human review" --> deid["S3 de-identified<br/>shortlists"]
+```
+
+### How it's delivered and observed
+
+```mermaid
+flowchart TB
+  gh["GitHub<br/>PRs + CI checks"] --> gha["GitHub Actions<br/>OIDC, no stored keys"]
+  gha -- "terraform apply" --> infra["AWS: network, EKS,<br/>queue, buckets, Bedrock"]
+  gha -- "build + push" --> ecr["ECR<br/>images by commit SHA"]
+  gh -- "gitops/" --> argo["Argo CD"]
+  argo -- "syncs" --> apps["gateway + workers"]
+  apps -- "metrics" --> prom["Prometheus<br/>+ Alertmanager"]
+  apps -- "traces" --> tempo["Tempo"]
+  prom --> graf["Grafana"]
+  tempo --> graf
 ```
 
 - **Only the gateway can reach the model.** Its Pod Identity role is the only one allowed `bedrock:InvokeModel`, on the project's own inference profile; default-deny NetworkPolicies let the gateway and workers make HTTPS calls only to addresses inside the VPC, so Bedrock is reached through a private endpoint, never the internet.
