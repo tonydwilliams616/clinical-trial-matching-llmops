@@ -84,17 +84,18 @@ case "${1:-}" in
     ;;
 
   keda-pause)
-    say "Hypothesis: if scaling stops while jobs wait, CtmQueueNotDraining fires within ~5 minutes."
+    say "Hypothesis: if scaling is paused while jobs wait, CtmScalingPaused fires after 10 minutes and emails."
     kubectl -n agent-worker annotate scaledobject agent-worker autoscaling.keda.sh/paused-replicas="0" --overwrite
     say "Now queue work: loadtest/queue-burst.sh 2"
     say "Watch: Prometheus alerts page; dashboard 'Queue depth and workers' (jobs waiting, workers 0)."
-    say "If the alert does NOT fire, that is a finding: KEDA may stop reporting queue depth while paused."
+    say "Expect: CtmScalingPaused pending at once, firing at 10 minutes. CtmQueueMetricsMissing stays silent:"
+    say "KEDA stops publishing queue depth while paused, and that rule ignores a deliberate pause."
     say "Undo with: chaos/experiment.sh keda-resume"
     ;;
 
   keda-resume)
     kubectl -n agent-worker annotate scaledobject agent-worker autoscaling.keda.sh/paused-replicas-
-    say "Expect: workers scale up, the queue drains, CtmQueueNotDraining resolves."
+    say "Expect: a worker starts within ~30 s, the queue drains, CtmScalingPaused resolves (resolved email)."
     ;;
 
   tempo-pod)
