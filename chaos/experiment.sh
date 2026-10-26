@@ -23,14 +23,28 @@ fi
 
 say() { printf '\n%s\n' "$*"; }
 
+# Queues one job, waits for a worker that is running and not shutting down,
+# then gives it a few seconds to be mid-job. A fixed sleep raced KEDA on EKS
+# (25 Oct): from zero, KEDA can take ~30 s to start a worker, and a worker in
+# its cool-down may already be terminating.
 busy_worker() {
-  local pod
-  pod="$(kubectl -n agent-worker get pods -l app.kubernetes.io/name=agent-worker \
-    --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
-  if [[ -z "$pod" ]]; then
-    echo "No running worker. Start some jobs first: loadtest/queue-burst.sh 2" >&2
-    exit 1
-  fi
+  local pod="" waited=0
+  "$(dirname "$0")/../loadtest/queue-burst.sh" 1 >&2
+  while [[ -z "$pod" ]]; do
+    pod="$(kubectl -n agent-worker get pods -l app.kubernetes.io/name=agent-worker \
+      --field-selector=status.phase=Running \
+      -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.metadata.deletionTimestamp}{"\n"}{end}' 2>/dev/null \
+      | awk 'NF == 1 { print $1; exit }' || true)"
+    if [[ -z "$pod" ]]; then
+      if (( waited >= 120 )); then
+        echo "No worker started within 120 s - is KEDA paused? (chaos/experiment.sh keda-resume)" >&2
+        exit 1
+      fi
+      sleep 2
+      waited=$((waited + 2))
+    fi
+  done
+  sleep "${BUSY_DELAY:-8}"  # a job takes ~28 s: 8 s in, it is mid-job
   echo "$pod"
 }
 
