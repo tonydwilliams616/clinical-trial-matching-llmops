@@ -17,7 +17,7 @@ terraform.rc
 
 # ---- Data: never commit datasets, even synthetic ones ----
 # Anchored with a leading slash so it only matches the repo-root folder,
-# not scripts/data/ (lesson from PitchVision).
+# not scripts/data/.
 /data/
 *.ndjson
 

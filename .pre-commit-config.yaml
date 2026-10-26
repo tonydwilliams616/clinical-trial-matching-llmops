@@ -8,7 +8,7 @@ repos:
         args: [--allow-multiple-documents]
       - id: check-added-large-files   # default limit 500 KB; stops datasets sneaking in
       - id: detect-private-key
-      - id: trailing-whitespace       # the cause of PitchVision's failed fmt check
+      - id: trailing-whitespace       # stray spaces fail terraform fmt checks in CI
       - id: end-of-file-fixer
 
   - repo: local
