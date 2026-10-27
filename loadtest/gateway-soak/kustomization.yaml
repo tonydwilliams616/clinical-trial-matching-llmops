@@ -1,0 +1,22 @@
+# The gateway k6 test in its soak profile: 12 requests a minute for 90 minutes,
+# a steady signal through a cluster upgrade (see UPGRADE.md).
+# kubectl apply -k loadtest/gateway-soak   (start)
+# kubectl delete -k loadtest/gateway-soak  (clean up)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../gateway
+patches:
+  - target:
+      kind: Job
+      name: k6-gateway
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: PROFILE, value: soak }
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: SOAK_RATE_PER_MIN, value: "12" }
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: SOAK_MINUTES, value: "90" }

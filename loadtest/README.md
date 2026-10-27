@@ -5,7 +5,7 @@ Neither is synced by Argo CD: they exist in the cluster only while they run.
 
 | Test | What it drives | What it proves |
 | --- | --- | --- |
-| `gateway/` (k6 Job) | `/v1/assess` directly, ramping 0 → 1 → 3 requests/s over 9 minutes | Latency and error rate against the SLOs (p95 under 5 s, under 1% 5xx); where Bedrock starts throttling; the gateway's CPU autoscaling |
+| `gateway/` (k6 Job) | `/v1/assess` directly, ramping 0 → 1 → 3 requests/s over 9 minutes (`gateway-soak/`: 12 a minute for 90 minutes) | Latency and error rate against the SLOs (p95 under 5 s, under 1% 5xx); where Bedrock starts throttling; the gateway's CPU autoscaling |
 | `queue-burst.sh` | A burst of match jobs on SQS | KEDA scales workers 0 → 3 and back to 0; every job finishes; traces show one job end to end |
 
 Synthetic data only: the k6 notes are generated with planted fake identifiers
@@ -52,6 +52,21 @@ Clean up (also removes the temporary firewall opening into the gateway):
 ```
 kubectl delete -k loadtest/gateway
 ```
+
+### Soak profile (cluster upgrades)
+
+The same test at a light constant rate for a long time: 12 requests a minute
+for 90 minutes (about 1,080 requests, around $1 of Bedrock). It gives a steady
+signal through an EKS upgrade, so a single failed request shows up in the
+summary (see `UPGRADE.md`).
+
+```
+kubectl apply -k loadtest/gateway-soak && kubectl -n loadtest logs -f job/k6-gateway
+```
+
+Same thresholds and clean-up (`kubectl delete -k loadtest/gateway-soak`). The
+k6 pod carries `karpenter.sh/do-not-disrupt`, so Karpenter won't replace its
+node while it runs.
 
 ## Test 2: queue burst (KEDA)
 
