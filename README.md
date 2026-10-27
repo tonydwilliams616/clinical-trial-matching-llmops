@@ -185,4 +185,5 @@ tests/monitoring/   # promtool unit tests for the alert rules
 scripts/data/       # dataset generation and snapshot scripts
 docs/images/        # screenshots from the EKS proof session
 .github/workflows/  # Terraform CI/deploy/destroy, image builds, manifests, alert rules
+UPGRADE.md          # EKS in-place upgrade runbook (1.36 → 1.37)
 ```
