@@ -17,9 +17,9 @@ variable "aws_account_id" {
 }
 
 variable "karpenter_version" {
-  description = "Karpenter chart version. Kubernetes 1.36 needs Karpenter >= 1.13 (karpenter.sh compatibility matrix)."
+  description = "Karpenter chart version. 1.15 supports Kubernetes 1.26-1.37 (MaxK8sVersion in pkg/providers/version); 1.14 stops at 1.36."
   type        = string
-  default     = "1.14.1"
+  default     = "1.15.1"
 }
 
 variable "argocd_chart_version" {
