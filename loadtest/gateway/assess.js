@@ -20,25 +20,44 @@ const throttled = new Counter('model_unavailable_502');
 
 http.setResponseCallback(http.expectedStatuses(200, 422));
 
-export const options = {
-  scenarios: {
-    ramp: {
-      // Requests per second, independent of how slow responses get: shows
-      // where latency bends and where Bedrock starts throttling (502s)
-      executor: 'ramping-arrival-rate',
-      startRate: 0,
-      timeUnit: '1s',
-      preAllocatedVUs: 20,
-      maxVUs: 60,
-      stages: [
-        { target: 1, duration: '1m' },  // warm up
-        { target: 1, duration: '2m' },  // steady, light
-        { target: 3, duration: '2m' },  // ramp
-        { target: 3, duration: '3m' },  // steady, heavier
-        { target: 0, duration: '1m' },  // ramp down
-      ],
-    },
+// Two profiles, picked with PROFILE:
+//   ramp (default) - 0 -> 1 -> 3 requests/s over 9 minutes: SLOs, throttling, HPA
+//   soak           - a light constant rate for a long time (SOAK_RATE_PER_MIN,
+//                    default 12; SOAK_MINUTES, default 90): a steady signal
+//                    through a cluster upgrade, so any failed request shows up
+const PROFILE = __ENV.PROFILE || 'ramp';
+const PROFILES = {
+  ramp: {
+    // Requests per second, independent of how slow responses get: shows
+    // where latency bends and where Bedrock starts throttling (502s)
+    executor: 'ramping-arrival-rate',
+    startRate: 0,
+    timeUnit: '1s',
+    preAllocatedVUs: 20,
+    maxVUs: 60,
+    stages: [
+      { target: 1, duration: '1m' },  // warm up
+      { target: 1, duration: '2m' },  // steady, light
+      { target: 3, duration: '2m' },  // ramp
+      { target: 3, duration: '3m' },  // steady, heavier
+      { target: 0, duration: '1m' },  // ramp down
+    ],
   },
+  soak: {
+    executor: 'constant-arrival-rate',
+    rate: Number(__ENV.SOAK_RATE_PER_MIN || 12),
+    timeUnit: '1m',
+    duration: `${Number(__ENV.SOAK_MINUTES || 90)}m`,
+    preAllocatedVUs: 5,
+    maxVUs: 20,
+  },
+};
+if (!PROFILES[PROFILE]) {
+  throw new Error(`Unknown PROFILE "${PROFILE}" - use ramp or soak`);
+}
+
+export const options = {
+  scenarios: { [PROFILE]: PROFILES[PROFILE] },
   thresholds: {
     'http_req_duration{expected_response:true}': ['p(95)<5000'],
     server_errors: ['rate<0.01'],
