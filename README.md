@@ -2,7 +2,7 @@
 
 **A production-style LLMOps platform on Amazon EKS that shortlists synthetic patients for clinical trials – routing every piece of clinical text through an in-cluster PII-masking gateway before it reaches Amazon Bedrock.**
 
-> Portfolio project. All four phases are built and were proven on a live EKS cluster on 25 Oct 2026; the fixes for what that session found were re-proven on EKS on 26 Oct (results below). The focus is the platform: infrastructure as code, GitOps delivery, keyless workload identity, network-enforced data protection, autoscaling and observability.
+> Portfolio project. All four phases are built and were proven on a live EKS cluster on 25 Oct 2026; the fixes for what that session found were re-proven on EKS on 26 Oct, and the cluster was upgraded in place from Kubernetes 1.36 to 1.37 under live traffic on 28 Oct (results below). The focus is the platform: infrastructure as code, GitOps delivery, keyless workload identity, network-enforced data protection, autoscaling and observability.
 
 ## Architecture at a glance
 
@@ -155,6 +155,38 @@ Every job completed and every result file was full size. Two wording fixes came 
 ![CtmScalingPaused firing after 10 minutes](docs/images/alert-scaling-paused.png)
 
 ![Email from Alertmanager through SNS: CtmJobsFailing firing](docs/images/alert-email.png)
+
+## Upgraded in place: EKS 1.36 → 1.37 (28 Oct 2026)
+
+The cluster was upgraded with traffic running the whole time, following [UPGRADE.md](UPGRADE.md): control plane, then the managed add-ons and system nodes in one Terraform apply, then the workload nodes replaced by Karpenter drift. Every component was checked against 1.37 first; Karpenter (1.14 → 1.15) and KEDA (2.20 → 2.21) were upgraded beforehand, and EKS upgrade insights passed all 7 checks.
+
+| Signal (15:37–17:18) | Result |
+| --- | --- |
+| Gateway soak (k6, 12 requests a minute for 90 minutes across the whole upgrade) | Job `Complete` with `SuccessCriteriaMet`: every threshold passed (p95 under 5 s, under 1% server errors, over 99% checks); about 1,080 requests, 0 interrupted |
+| Gateway responses (Grafana, both windows below) | Only 200s: no 502, 503 or safety refusals; 100% answered by the model |
+| Match jobs (2 every 10 minutes, workers drained as their nodes were replaced) | 12 of 12 completed with full result files, plus a check job before and after; dead-letter queue empty |
+| Gateway pods | Moved one at a time (PDB `maxUnavailable: 1`); the other pod served throughout; replacement Ready in 18 s |
+| Accepted risk: KEDA 2.21 and Argo CD 3.5 don't list 1.37 | Both work on 1.37: KEDA scaled a worker from zero within 30 s after the upgrade; all 10 Argo CD apps Synced and Healthy |
+| Versions | Control plane 1.37 by 16:02, system nodes by 16:05; every node v1.37.1 by 17:17 |
+
+| Time | Step |
+| --- | --- |
+| 15:46 | Apply starts: control plane |
+| 16:02 | Control plane 1.37 `ACTIVE`; the same apply moves the add-ons to their 1.37 builds |
+| 16:05 | Both system nodes replaced by v1.37.1 nodes (managed rolling update) |
+| 16:18 | Monitoring pods released; Karpenter replaces the first workload node and its gateway pod moves |
+| 16:21 | Second gateway pod moved to a 1.37 node |
+| 17:07 | Soak finishes; the last 1.36 node (held by the k6 pod) is replaced |
+
+![Dashboard during the control plane and system node upgrade: only 200s, 100% answered](docs/images/upgrade-control-plane.png)
+
+![Dashboard while the workload nodes and gateway pods were replaced (Prometheus restarted at 16:18): only 200s](docs/images/upgrade-workload-nodes.png)
+
+Gaps and observations:
+
+- **p99 latency spikes.** Assess p99 reached the top latency bucket (about 30 s) around 16:28–16:33, during queue bursts just after both gateway pods had moved, and again briefly at 17:17. p50 and p95 stayed around 1–2 s and the SLO held; the cause (cold gateway pods, Bedrock, or both) wasn't confirmed.
+- **The k6 summary table was lost.** When the k6 pod finished, its node was no longer pinned and Karpenter removed it at once, taking the pod's logs with it. The Job's `Complete` / `SuccessCriteriaMet` status is the record that every threshold passed.
+- **Monitoring history resets.** Prometheus has no persistent volume (the cluster is rebuilt every session), so moving it to a 1.37 node cleared the graphs before 16:18; the first screenshot was taken just before.
 
 ## Datasets (built in phase 1)
 
