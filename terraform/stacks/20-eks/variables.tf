@@ -19,7 +19,7 @@ variable "aws_account_id" {
 variable "kubernetes_version" {
   description = "EKS Kubernetes version. Must be in STANDARD support - extended support costs 6x more per hour."
   type        = string
-  default     = "1.36"
+  default     = "1.37"
 }
 
 variable "admin_principal_arns" {
