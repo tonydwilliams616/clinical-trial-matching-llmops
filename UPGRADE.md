@@ -107,3 +107,12 @@ A rebuild loses nothing that matters: the cluster is rebuilt from Terraform
 and Git every session, and the data lives outside it (S3 buckets, the SQS
 queue, ECR images, Secrets Manager), in permanent stacks the upgrade doesn't
 touch.
+
+## As run (28 Oct 2026)
+
+The upgrade worked as planned; results are in the README. Two things went differently, and the next upgrade should do them this way:
+
+1. **Release the pinned nodes during the soak, not after it.** The two drifted workload nodes held both gateway pods as well as the pinned pods. Waiting for k6 to finish would have moved the gateway with no traffic running, proving nothing. Instead: screenshot Grafana, cordon both old nodes, delete the monitoring pods (Karpenter then replaced that node and moved one gateway pod), and delete the gateway pod left on the k6 node once its replacement was Ready. The k6 node went last, after the soak.
+2. **Save the k6 summary before the pod's node can go.** When the k6 pod finished, its node stopped being pinned and Karpenter removed it at once, with the pod's logs. Keep a `kubectl logs -f` stream attached to the end, or have k6 write its summary somewhere that outlives the node.
+
+Timings: control plane, add-ons and system nodes about 20 minutes (15:46–16:05); each workload node about 3 minutes once released.
